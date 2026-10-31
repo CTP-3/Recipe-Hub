@@ -167,21 +167,21 @@ export default function UploadPage() {
   }
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-10 text-neutral-900">
+    <main className="mx-auto max-w-3xl px-4 py-10 text-green-900">
       {/* Page heading */}
       <header className="mb-8">
-        <p className="mb-2 text-sm font-semibold uppercase tracking-wide text-emerald-800">
+        <p className="mb-4 text-2xl font-bold uppercase tracking-wide text-emerald-700">
           Recipe Hub
         </p>
 
-        <h1 className="text-3xl font-bold">
-          Turn your video into a recipe
+        <h1 className="text-4xl font-bold">
+          Turn a video into a recipe 🍲
         </h1>
 
         <p className="mt-3 text-neutral-700">
-          Upload a cooking video and let Whisper and Ollama
-          extract ingredients, cooking instructions, and
-          recipe details.
+          Upload a cooking video
+          and extract the ingredients, instructions, and
+          full recipe details.
         </p>
       </header>
 
@@ -478,6 +478,8 @@ export default function UploadPage() {
               Verify ingredients, measurements, temperatures,
               and cooking instructions before use.
             </p>
+
+        
           </div>
         )}
       </section>

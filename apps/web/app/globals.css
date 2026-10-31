@@ -1,1 +1,13 @@
 @import "tailwindcss";
+/* Tailwind class	Meaning
+bg-emerald-900	Dark green background
+text-stone-700	Dark gray-brown text
+p-6	24px padding
+mt-4	16px top margin
+rounded-2xl	Large rounded corners
+shadow-sm	Small shadow
+grid grid-cols-2	Two-column grid
+gap-4	16px spacing between items
+hover:bg-emerald-800	Change background on hover
+md:grid-cols-3	Three columns on medium screens and larger
+*/

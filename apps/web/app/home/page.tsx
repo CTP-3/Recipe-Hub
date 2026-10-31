@@ -1,0 +1,10 @@
+import Link from 'next/link';
+import RecipeCard from '../../components/RecipeCard';
+import { demoRecipes } from '../../lib/demo-recipes';
+export default function HomePage() {
+ return <main className="mx-auto max-w-7xl space-y-12 px-5 py-10 md:px-8">
+   <section className="grid gap-8 overflow-hidden rounded-[2rem] bg-[#e7eadb] p-8 md:grid-cols-2 md:p-14"><div className="flex flex-col justify-center"><p className="mb-3 text-sm font-bold uppercase tracking-[0.2em] text-[#8b6344]">Your kitchen, organized</p><h1 className="max-w-lg text-4xl font-black leading-tight text-[#294d38] md:text-6xl">Good food starts with a little inspiration.</h1><p className="mt-5 max-w-md text-stone-700">Turn cooking videos into recipes, save your favorites, and find your next meal.</p><div className="mt-7 flex flex-wrap gap-3"><Link href="/upload" className="rounded-full bg-[#294d38] px-6 py-3 font-semibold text-white hover:bg-[#1b3526]">+ Create a recipe</Link><Link href="/discover" className="rounded-full border border-[#294d38] px-6 py-3 font-semibold text-[#294d38] hover:bg-white/50">Explore recipes</Link></div></div><img src={demoRecipes[0].image} alt="Salmon dish" className="h-72 w-full rounded-[1.5rem] object-cover md:h-full"/></section>
+   <section><div className="mb-6 flex items-end justify-between"><div><p className="text-sm font-semibold uppercase tracking-widest text-[#a86d47]">Inspiration</p><h2 className="text-3xl font-bold text-[#294d38]">Recipes to try</h2></div><Link href="/discover" className="font-semibold text-[#294d38] underline">View all</Link></div><div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">{demoRecipes.slice(0,4).map(recipe=><RecipeCard key={recipe.id} recipe={recipe}/>)}</div></section>
+   <section className="rounded-3xl border border-stone-200 bg-white p-7"><h2 className="text-2xl font-bold text-[#294d38]">Your cookbook</h2><p className="mt-2 text-stone-600">Keep everything you create and save in one place.</p><Link href="/my-recipes" className="mt-4 inline-block rounded-full bg-[#294d38] px-5 py-3 font-semibold text-white">Open My Recipes</Link></section>
+ </main>;
+}

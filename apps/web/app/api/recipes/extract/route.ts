@@ -1,4 +1,6 @@
-
+// Next.js API route for recipe extraction. This route handles POST requests to extract recipes from uploaded video files. 
+// It validates the uploaded file, checks its type and size, and forwards the request to an external recipe extraction service. 
+// The response from the service is returned to the client, along with appropriate error handling for various failure scenarios.
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
