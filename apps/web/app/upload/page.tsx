@@ -35,12 +35,71 @@ type ExtractionResult = {
   recipe: Recipe;
 };
 
+type DownloadableVideo = {
+  label: string;
+  url: string;
+  description: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function getDownloadableVideo(result: unknown): DownloadableVideo | null {
+  if (!isRecord(result) || !Array.isArray(result.contents)) {
+    return null;
+  }
+
+  const contents: unknown[] = result.contents;
+  for (const content of contents) {
+    if (!isRecord(content) || !Array.isArray(content.videos)) {
+      continue;
+    }
+
+    const videos: unknown[] = content.videos;
+    for (const video of videos) {
+      if (!isRecord(video) || typeof video.url !== "string") {
+        continue;
+      }
+
+      try {
+        const url = new URL(video.url);
+        if (
+          url.protocol !== "https:" ||
+          url.hostname !== "edge-api-v3.smvd.xyz" ||
+          !url.pathname.startsWith("/rproxy/") ||
+          url.username ||
+          url.password
+        ) {
+          continue;
+        }
+
+        return {
+          label: typeof video.label === "string" ? video.label : "Video",
+          url: url.toString(),
+          description: url.searchParams.get("dl") ?? "",
+        };
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return null;
+}
+
 const MAX_SIZE = 25 * 1024 * 1024;
 
 export default function UploadPage() {
   const inputId = useId();
 
   const [video, setVideo] = useState<File | null>(null);
+  const [videoUrl, setVideoUrl] = useState("");
+  const [inspectionResult, setInspectionResult] = useState<{
+    platform: string;
+    result: unknown;
+    downloadableVideo: DownloadableVideo | null;
+  } | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [transcript, setTranscript] = useState("");
@@ -61,6 +120,7 @@ export default function UploadPage() {
 
     setError("");
     setMessage("");
+    setInspectionResult(null);
     setRecipe(null);
     setTranscript("");
     setModel("");
@@ -124,6 +184,124 @@ export default function UploadPage() {
         throw new Error(
           typeof data.error === "string"
             ? data.error
+            : "Recipe extraction failed."
+        );
+      }
+
+      if (!data.recipe || typeof data.recipe !== "object") {
+        throw new Error("The backend did not return a recipe.");
+      }
+
+      setRecipe(data.recipe);
+      setTranscript(data.transcript ?? "");
+      setModel(data.model ?? "");
+      setMessage("Recipe generated successfully!");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while processing the video."
+      );
+      setMessage("");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // URL input
+  async function handleGenerateFromUrl() {
+    if (!videoUrl.trim() || loading) {
+      if (!videoUrl.trim()) setError("Please enter a video link first.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setInspectionResult(null);
+    setMessage("Checking the video link...");
+
+    try {
+      const response = await fetch("/api/media/inspect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: videoUrl.trim() }),
+      });
+
+      const data: {
+        platform?: string;
+        result?: unknown;
+        error?: { message?: string };
+      } = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data.error?.message === "string"
+            ? data.error.message
+            : "Could not inspect this video link."
+        );
+      }
+
+      if (!data.platform || data.result === undefined) {
+        throw new Error("The video service returned an unexpected response.");
+      }
+
+      const downloadableVideo = getDownloadableVideo(data.result);
+      setInspectionResult({
+        platform: data.platform,
+        result: data.result,
+        downloadableVideo,
+      });
+
+      if (!downloadableVideo) {
+        throw new Error("The video service did not return a downloadable video.");
+      }
+
+      setMessage("Video details loaded. Review the description, then generate a recipe.");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while processing the video."
+      );
+      setMessage("");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGenerateFromInspectedLink() {
+    const downloadableVideo = inspectionResult?.downloadableVideo;
+    if (!downloadableVideo || loading) {
+      if (!downloadableVideo) {
+        setError("Inspect a video link with a downloadable video first.");
+      }
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setRecipe(null);
+    setTranscript("");
+    setModel("");
+    setMessage("Downloading and processing the video. This may take a few minutes.");
+
+    try {
+      const response = await fetch("/api/recipes/extract-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          downloadUrl: downloadableVideo.url,
+          description: downloadableVideo.description,
+        }),
+      });
+
+      const data: ExtractionResult & { error?: { message?: string } } =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data.error?.message === "string"
+            ? data.error.message
             : "Recipe extraction failed."
         );
       }
@@ -259,6 +437,65 @@ export default function UploadPage() {
         >
           {loading ? "Generating Recipe..." : "Generate Recipe"}
         </button>
+
+        <div className="my-6 border-t border-neutral-300" />
+
+        <h3 className="mb-3 text-lg font-semibold">Or use a video link</h3>
+        <label htmlFor={`${inputId}-url`} className="mb-2 block font-medium">
+          YouTube, TikTok, or Instagram link
+        </label>
+        <input
+          id={`${inputId}-url`}
+          type="url"
+          value={videoUrl}
+          disabled={loading}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${inputId}-error` : `${inputId}-url-help`}
+          onChange={(event) => setVideoUrl(event.target.value)}
+          placeholder="https://www.tiktok.com/..."
+          className="block w-full rounded-lg border border-neutral-500 p-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800 disabled:opacity-50"
+        />
+        <p id={`${inputId}-url-help`} className="mt-2 text-sm text-neutral-600">
+          Inspect public video details and available media options.
+        </p>
+        <button
+          type="button"
+          onClick={handleGenerateFromUrl}
+          disabled={!videoUrl.trim() || loading}
+          className="mt-4 min-h-11 w-full rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white transition-colors hover:bg-emerald-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? "Checking Link..." : "Inspect Video Link"}
+        </button>
+
+        {inspectionResult && (
+          <div className="mt-6">
+            <h3 className="mb-3 text-lg font-semibold">
+              Video details ({inspectionResult.platform})
+            </h3>
+            {inspectionResult.downloadableVideo && (
+              <>
+                <p className="mb-2 text-sm font-medium">
+                  Download option: {inspectionResult.downloadableVideo.label}
+                </p>
+                <p className="mb-4 whitespace-pre-wrap text-sm text-neutral-700">
+                  {inspectionResult.downloadableVideo.description ||
+                    "No video description was provided."}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleGenerateFromInspectedLink}
+                  disabled={loading}
+                  className="mb-5 min-h-11 w-full rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white transition-colors hover:bg-emerald-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {loading ? "Generating Recipe..." : "Generate Recipe From Link"}
+                </button>
+              </>
+            )}
+            <pre className="max-h-96 overflow-auto whitespace-pre-wrap wrap-break-words rounded-lg bg-neutral-100 p-4 text-sm">
+              {JSON.stringify(inspectionResult.result, null, 2)}
+            </pre>
+          </div>
+        )}
 
         {/* Processing indicator */}
         {loading && (
