@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@11.17.0",
   "scripts": {
-    "dev": "concurrently -n turbo,azurite -c cyan,magenta \"turbo run dev --parallel --filter \\\"!@project/migrate\\\"\" \"azurite --silent --skipApiVersionCheck --location .azurite\"",
+    "dev": "concurrently -n turbo,azurite,extraction -c cyan,magenta,yellow \"turbo run dev --parallel --filter \\\"!@project/migrate\\\"\" \"azurite --silent --skipApiVersionCheck --location .azurite\" \"cd services/recipe-extraction && python3 -m uvicorn main:app --host 127.0.0.1 --port 8000\"",
     "build": "turbo run build",
     "start": "pnpm --filter @project/web start",
     "typecheck": "turbo run typecheck",

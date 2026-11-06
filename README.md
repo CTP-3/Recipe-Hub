@@ -28,14 +28,28 @@ Recipe Hub helps home cooks and food lovers turn social media recipe links into 
 
 ## Run it locally
 
-No Docker, no cloud account — everything runs from npm.
+No Docker or cloud account is needed. Video extraction also requires Python,
+FFmpeg, and Ollama with the configured model available.
 
 ```bash
 pnpm install
 pnpm prisma:generate     # typed DB client
+python3 -m pip install -r services/recipe-extraction/requirements.txt
 pnpm dev                 # web + worker + your own Postgres + Azurite
 pnpm db:seed             # demo data (with dev running)
 ```
+
+Install FFmpeg and Ollama separately, then make sure Ollama is running and has
+the `gemma3:1b` model (`ollama pull gemma3:1b`). `pnpm dev` starts the Python
+extraction API, which runs Whisper for transcription.
+Link inspection also requires an SMVD RapidAPI key in
+`apps/web/.env.local`:
+
+```dotenv
+SMVD_RAPIDAPI_KEY=your-rapidapi-key
+```
+
+Restart `pnpm dev` after setting the key.
 
 Check it worked: `http://localhost:3000/api/health` → `{"status":"ok","db":"ok"}`.
 All commands: see `package.json` scripts, or `CONTRIBUTING.md` for the
