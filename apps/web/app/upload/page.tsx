@@ -25,7 +25,6 @@ type Recipe = {
   ingredients?: Ingredient[];
   instructions?: Instruction[];
   equipment?: string[];
-  dietary_tags?: string[] | string;
   missing_information?: string[] | string | null;
 };
 
@@ -610,10 +609,7 @@ export default function UploadPage() {
             </div>
 
             {/* Equipment */}
-            {(Array.isArray(recipe.dietary_tags)
-                ? recipe.dietary_tags.length > 0
-                : typeof recipe.dietary_tags === "string" &&
-                    recipe.dietary_tags.length > 0) && (
+            {recipe.equipment?.length ? (
               <div>
                 <h3 className="text-lg font-semibold">
                   Equipment
@@ -624,31 +620,7 @@ export default function UploadPage() {
                   ))}
                 </ul>
               </div>
-            )}
-
-            {/* Dietary tags */}
-            {Boolean(recipe.dietary_tags?.length) && (
-              <div>
-                <h3 className="text-lg font-semibold">
-                  Dietary Tags
-                </h3>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {(Array.isArray(recipe.dietary_tags)
-                    ? recipe.dietary_tags
-                    : typeof recipe.dietary_tags === "string"
-                        ? [recipe.dietary_tags]
-                        : []
-                    ).map((tag, index) => (
-                    <span
-                      key={index}
-                      className="rounded-full bg-emerald-100 px-3 py-1 text-sm text-emerald-900"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
+            ) : null}
 
             {/* Missing information */}
             {Boolean(recipe.missing_information) && (
