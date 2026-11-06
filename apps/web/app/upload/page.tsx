@@ -95,11 +95,8 @@ export default function UploadPage() {
 
   const [video, setVideo] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState("");
-  const [inspectionResult, setInspectionResult] = useState<{
-    platform: string;
-    result: unknown;
-    downloadableVideo: DownloadableVideo | null;
-  } | null>(null);
+  const [downloadableVideo, setDownloadableVideo] =
+    useState<DownloadableVideo | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [transcript, setTranscript] = useState("");
@@ -120,7 +117,7 @@ export default function UploadPage() {
 
     setError("");
     setMessage("");
-    setInspectionResult(null);
+    setDownloadableVideo(null);
     setRecipe(null);
     setTranscript("");
     setModel("");
@@ -217,7 +214,10 @@ export default function UploadPage() {
 
     setLoading(true);
     setError("");
-    setInspectionResult(null);
+    setDownloadableVideo(null);
+    setRecipe(null);
+    setTranscript("");
+    setModel("");
     setMessage("Checking the video link...");
 
     try {
@@ -246,17 +246,13 @@ export default function UploadPage() {
       }
 
       const downloadableVideo = getDownloadableVideo(data.result);
-      setInspectionResult({
-        platform: data.platform,
-        result: data.result,
-        downloadableVideo,
-      });
+      setDownloadableVideo(downloadableVideo);
 
       if (!downloadableVideo) {
         throw new Error("The video service did not return a downloadable video.");
       }
 
-      setMessage("Video details loaded. Review the description, then generate a recipe.");
+      await generateRecipeFromLink(downloadableVideo);
     } catch (err) {
       setError(
         err instanceof Error
@@ -269,51 +265,50 @@ export default function UploadPage() {
     }
   }
 
-  async function handleGenerateFromInspectedLink() {
-    const downloadableVideo = inspectionResult?.downloadableVideo;
-    if (!downloadableVideo || loading) {
-      if (!downloadableVideo) {
-        setError("Inspect a video link with a downloadable video first.");
-      }
-      return;
+  async function generateRecipeFromLink(downloadableVideo: DownloadableVideo) {
+    setMessage("Downloading and processing the video. This may take a few minutes.");
+
+    const response = await fetch("/api/recipes/extract-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        downloadUrl: downloadableVideo.url,
+        description: downloadableVideo.description,
+      }),
+    });
+
+    const data: ExtractionResult & { error?: { message?: string } } =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        typeof data.error?.message === "string"
+          ? data.error.message
+          : "Recipe extraction failed."
+      );
     }
+
+    if (!data.recipe || typeof data.recipe !== "object") {
+      throw new Error("The backend did not return a recipe.");
+    }
+
+    setRecipe(data.recipe);
+    setTranscript(data.transcript ?? "");
+    setModel(data.model ?? "");
+    setMessage("Recipe generated successfully!");
+  }
+
+  async function handleRetryLinkExtraction() {
+    if (!downloadableVideo || loading) return;
 
     setLoading(true);
     setError("");
     setRecipe(null);
     setTranscript("");
     setModel("");
-    setMessage("Downloading and processing the video. This may take a few minutes.");
 
     try {
-      const response = await fetch("/api/recipes/extract-link", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          downloadUrl: downloadableVideo.url,
-          description: downloadableVideo.description,
-        }),
-      });
-
-      const data: ExtractionResult & { error?: { message?: string } } =
-        await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          typeof data.error?.message === "string"
-            ? data.error.message
-            : "Recipe extraction failed."
-        );
-      }
-
-      if (!data.recipe || typeof data.recipe !== "object") {
-        throw new Error("The backend did not return a recipe.");
-      }
-
-      setRecipe(data.recipe);
-      setTranscript(data.transcript ?? "");
-      setModel(data.model ?? "");
-      setMessage("Recipe generated successfully!");
+      await generateRecipeFromLink(downloadableVideo);
     } catch (err) {
       setError(
         err instanceof Error
@@ -464,37 +459,18 @@ export default function UploadPage() {
           disabled={!videoUrl.trim() || loading}
           className="mt-4 min-h-11 w-full rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white transition-colors hover:bg-emerald-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {loading ? "Checking Link..." : "Inspect Video Link"}
+          {loading ? "Processing Video..." : "Download and Generate Recipe"}
         </button>
 
-        {inspectionResult && (
-          <div className="mt-6">
-            <h3 className="mb-3 text-lg font-semibold">
-              Video details ({inspectionResult.platform})
-            </h3>
-            {inspectionResult.downloadableVideo && (
-              <>
-                <p className="mb-2 text-sm font-medium">
-                  Download option: {inspectionResult.downloadableVideo.label}
-                </p>
-                <p className="mb-4 whitespace-pre-wrap text-sm text-neutral-700">
-                  {inspectionResult.downloadableVideo.description ||
-                    "No video description was provided."}
-                </p>
-                <button
-                  type="button"
-                  onClick={handleGenerateFromInspectedLink}
-                  disabled={loading}
-                  className="mb-5 min-h-11 w-full rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white transition-colors hover:bg-emerald-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {loading ? "Generating Recipe..." : "Generate Recipe From Link"}
-                </button>
-              </>
-            )}
-            <pre className="max-h-96 overflow-auto whitespace-pre-wrap wrap-break-words rounded-lg bg-neutral-100 p-4 text-sm">
-              {JSON.stringify(inspectionResult.result, null, 2)}
-            </pre>
-          </div>
+        {downloadableVideo && error && !recipe && (
+          <button
+            type="button"
+            onClick={handleRetryLinkExtraction}
+            disabled={loading}
+            className="mt-4 min-h-11 w-full rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white transition-colors hover:bg-emerald-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? "Generating Recipe..." : "Retry Recipe Generation"}
+          </button>
         )}
 
         {/* Processing indicator */}

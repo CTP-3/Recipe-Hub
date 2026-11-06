@@ -2,6 +2,7 @@
 // It validates the uploaded file, checks its type and size, and forwards the request to an external recipe extraction service. 
 // The response from the service is returned to the client, along with appropriate error handling for various failure scenarios.
 import { NextRequest, NextResponse } from "next/server";
+import { recipeServiceUrl } from "../service-url";
 
 export const runtime = "nodejs";
 
@@ -33,14 +34,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const serviceUrl =
-      process.env.RECIPE_SERVICE_URL ??
-      "http://127.0.0.1:8000/extract";
-
     const serviceData = new FormData();
     serviceData.append("video", video);
 
-    const response = await fetch(serviceUrl, {
+    const response = await fetch(recipeServiceUrl("extract"), {
       method: "POST",
       body: serviceData,
       signal: AbortSignal.timeout(300000),
@@ -66,4 +63,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

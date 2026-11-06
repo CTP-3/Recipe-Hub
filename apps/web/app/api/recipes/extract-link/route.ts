@@ -1,4 +1,5 @@
 import { currentUserId } from "@project/auth";
+import { recipeServiceUrl } from "../service-url";
 
 export const runtime = "nodejs";
 
@@ -58,13 +59,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const configuredUrl =
-    process.env.RECIPE_SERVICE_URL ?? "http://127.0.0.1:8000/extract";
-  const serviceUrl = configuredUrl.replace(/\/extract\/?$/, "/extract-link");
-
   let response: Response;
   try {
-    response = await fetch(serviceUrl, {
+    response = await fetch(recipeServiceUrl("extract-link"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
