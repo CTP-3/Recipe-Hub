@@ -22,7 +22,7 @@ production behavior diverge, controlled by configuration, not code branches.
 | Database (dev) | Local Postgres via `apps/db-server/` | Azure Postgres | `DATABASE_URL` |
 | Blob storage | Azurite | Azure Blob Storage | `AZURE_STORAGE_CONNECTION_STRING` |
 | Queue | Azurite | Azure Storage Queue | `AZURE_STORAGE_CONNECTION_STRING` |
-| Identity | Dev stub (`x-user-id` header, env fallback) | Real auth (OAuth, JWTs) | `ALLOW_DEV_IDENTITY` guard + package replacement |
+| Identity | Auth.js Google OAuth + database sessions | Auth.js Google OAuth + database sessions | `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `AUTH_SECRET` |
 
 ## Design intent
 
@@ -31,20 +31,19 @@ production behavior diverge, controlled by configuration, not code branches.
   which one the SDK connects to.
 - **Default to running.** Every seam works out of the box with zero cloud
   setup. `pnpm dev` starts the stand-ins (Postgres, Azurite).
-- **Safe by default.** The identity stub, and any other stand-in that could
-  be a security risk, throws in production unless explicitly overridden.
+- **Safe by default.** Identity always comes from a verified Auth.js session;
+  no development-only identity bypass is enabled.
 - **One env var per seam.** Azure Blob and Queue share
   `AZURE_STORAGE_CONNECTION_STRING`; the database has its own
-  (`DATABASE_URL`); identity has its own (`ALLOW_DEV_IDENTITY`). Each seam
-  is a distinct env var away from production, and none requires more than
-  one.
+  (`DATABASE_URL`); identity uses OAuth client credentials and a session
+  secret. Each seam is configured through environment variables.
 
 ## ADRs
 
 - [ADR-0005](../adr/0005-pglite-tests.md) — PGlite as the test-database seam.
 - [ADR-0008](../adr/0008-azurite-seam.md) — Azurite as the blob/queue seam.
-- [ADR-0003](../adr/0003-dev-identity-stub.md) — the identity stub as the auth
-  seam.
+- [ADR-0003](../adr/0003-dev-identity-stub.md) — history and rationale for the
+  original identity stub.
 
 ## Adding a new seam
 

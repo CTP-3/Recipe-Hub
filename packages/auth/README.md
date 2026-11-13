@@ -1,8 +1,7 @@
-# @project/auth — identity / auth
+# @project/auth — Google sign-in and identity
 
-The "who is the current user?" logic. Currently a deliberately naive dev stub.
-In Week 8 it's replaced with real authentication shared across the web app
-and the worker.
+Auth.js handles Google OAuth and database-backed sessions. The server derives
+the current user from the session; client-supplied user IDs are not trusted.
 
 ## Public API
 
@@ -10,30 +9,26 @@ All exports come from `src/index.ts`:
 
 | Export | What it does |
 |---|---|
-| `currentUserId()` | Returns the current user's ID. Reads from `x-user-id` request header, then `DEV_USER_ID` env var, then falls back to `demo-user`. |
+| `currentUserId()` | Returns the current session's user ID, or `null` when signed out. |
+| `handlers` | Auth.js route handlers for OAuth callbacks and session operations. |
+| `auth()` | Reads the current Auth.js session on the server. |
+| `signIn()` / `signOut()` | Server-side Auth.js sign-in and sign-out actions. |
 
 ## Dependencies
 
-- `next` — for `next/headers` (the dev stub reads the HTTP request's headers)
+- Auth.js and its Prisma adapter
+- `@project/db` — persisted user, OAuth-account, and session records
 
 ## Consumers
 
 - `apps/web` — via `@project/auth`
 
-## The dev stub
+## Google OAuth setup
 
-```ts
-currentUserId()
-  1. x-user-id request header (if present)
-  2. DEV_USER_ID env var (if set)
-  3. "demo-user" (created by the seed script)
-```
+Configure `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, and `AUTH_SECRET` in the
+environment. Register `http://localhost:3000/api/auth/callback/google` as a
+Google OAuth redirect URI for local development. Do not commit credentials.
 
-In development, this trusts the client to say who they are. That's intentional.
-Week 8 replaces it with real auth (OAuth, JWTs, middleware) that works for both
-the web app and the worker.
-
-## Disabled in production
-
-The dev stub throws if `NODE_ENV === "production"` unless `ALLOW_DEV_IDENTITY` is
-set. Real auth in Week 8 removes this guard.
+The web app exposes Auth.js handlers at `/api/auth/*`. Starting sign-in by
+opening `/api/auth/signin/google` redirects directly to Google; no custom
+login page is required.

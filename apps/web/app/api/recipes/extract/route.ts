@@ -2,6 +2,7 @@
 // It validates the uploaded file, checks its type and size, and forwards the request to an external recipe extraction service. 
 // The response from the service is returned to the client, along with appropriate error handling for various failure scenarios.
 import { NextRequest, NextResponse } from "next/server";
+import { currentUserId } from "@project/auth";
 import { recipeServiceUrl } from "../service-url";
 
 export const runtime = "nodejs";
@@ -9,6 +10,13 @@ export const runtime = "nodejs";
 const MAX_SIZE = 25 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
+  if (!(await currentUserId())) {
+    return NextResponse.json(
+      { error: { code: "UNAUTHENTICATED", message: "Authentication required." } },
+      { status: 401 }
+    );
+  }
+
   try {
     const formData = await request.formData();
     const video = formData.get("video");
