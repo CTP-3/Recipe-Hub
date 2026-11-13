@@ -1,11 +1,19 @@
 
 import { NextRequest, NextResponse } from "next/server";
+import { currentUserId } from "@project/auth";
 
 export const runtime = "nodejs";
 
 const MAX_SIZE = 25 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
+  if (!(await currentUserId())) {
+    return NextResponse.json(
+      { error: { code: "UNAUTHENTICATED", message: "Authentication required." } },
+      { status: 401 }
+    );
+  }
+
   try {
     const formData = await request.formData();
     const video = formData.get("video");
@@ -64,4 +72,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

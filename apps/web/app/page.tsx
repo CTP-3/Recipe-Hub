@@ -11,10 +11,11 @@ export default async function Home() {
     <main className="space-y-8">
       <header>
         <h1 className="text-2xl font-bold">Starter Skeleton</h1>
-        <p className="text-sm text-neutral-500">
-          Signed in as <code className="rounded bg-neutral-100 px-1">{userId}</code> (dev
-          identity stub — real auth arrives in Week 8)
-        </p>
+        {userId && (
+          <p className="text-sm text-neutral-500">
+            Signed in as <code className="rounded bg-neutral-100 px-1">{userId}</code>
+          </p>
+        )}
       </header>
 
       <section className="rounded-lg border border-neutral-200 bg-neutral-50 p-6">

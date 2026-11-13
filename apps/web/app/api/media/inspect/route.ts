@@ -64,7 +64,9 @@ function upstreamUrl(videoUrl: URL, platform: Platform): URL | undefined {
 }
 
 export async function POST(request: Request) {
-  await currentUserId();
+  if (!(await currentUserId())) {
+    return errorResponse("UNAUTHENTICATED", "Authentication required.", 401);
+  }
 
   let body: unknown;
   try {

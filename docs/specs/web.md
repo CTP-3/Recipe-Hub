@@ -35,6 +35,8 @@ Every route handler and Server Action, in order:
 - One error shape everywhere: `{ error: { code, message } }` with
   400 validation / 401 no session / 403 not permitted / 404 absent-or-foreign
   / 409 conflict. Prisma mapped: P2002→409, P2025→404.
+- The health endpoint and Auth.js routes are public; protected API routes
+  return 401 when no valid session exists.
 - **Foreign resources return 404, not 403** — existence is not confirmed to
   non-owners.
 - Raw errors and stack traces never reach a client.
@@ -46,5 +48,5 @@ Every route handler and Server Action, in order:
 
 ## Key decisions
 
-- [ADR-0003](../adr/0003-dev-identity-stub.md) — identity stub + production guard.
+- [ADR-0003](../adr/0003-dev-identity-stub.md) — history of the original development identity stub.
 - [ADR-0009](../adr/0009-domain-web-only.md) — schemas/queries live in `packages/domain`.
