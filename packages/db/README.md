@@ -4,8 +4,9 @@ The database seam. Owns the Prisma schema, the generated client, the migration
 files, and the `applyMigrations` helper. Every app and most other packages
 import from here.
 
-**Boilerplate:** the schema is empty (generator + datasource only). Example
-branches add their own models, enums, and migration files.
+The schema defines users, authentication accounts and sessions, cookbooks,
+recipes, and their related records. SQL migrations are applied by the local
+database server and the PGlite test setup.
 
 ## Public API
 
