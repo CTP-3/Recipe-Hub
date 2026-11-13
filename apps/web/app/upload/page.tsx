@@ -25,7 +25,6 @@ type Recipe = {
   ingredients?: Ingredient[];
   instructions?: Instruction[];
   equipment?: string[];
-  dietary_tags?: string[] | string;
   missing_information?: string[] | string | null;
 };
 
@@ -35,12 +34,68 @@ type ExtractionResult = {
   recipe: Recipe;
 };
 
+type DownloadableVideo = {
+  label: string;
+  url: string;
+  description: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function getDownloadableVideo(result: unknown): DownloadableVideo | null {
+  if (!isRecord(result) || !Array.isArray(result.contents)) {
+    return null;
+  }
+
+  const contents: unknown[] = result.contents;
+  for (const content of contents) {
+    if (!isRecord(content) || !Array.isArray(content.videos)) {
+      continue;
+    }
+
+    const videos: unknown[] = content.videos;
+    for (const video of videos) {
+      if (!isRecord(video) || typeof video.url !== "string") {
+        continue;
+      }
+
+      try {
+        const url = new URL(video.url);
+        if (
+          url.protocol !== "https:" ||
+          url.hostname !== "edge-api-v3.smvd.xyz" ||
+          !url.pathname.startsWith("/rproxy/") ||
+          url.username ||
+          url.password
+        ) {
+          continue;
+        }
+
+        return {
+          label: typeof video.label === "string" ? video.label : "Video",
+          url: url.toString(),
+          description: url.searchParams.get("dl") ?? "",
+        };
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return null;
+}
+
 const MAX_SIZE = 25 * 1024 * 1024;
 
 export default function UploadPage() {
   const inputId = useId();
 
   const [video, setVideo] = useState<File | null>(null);
+  const [videoUrl, setVideoUrl] = useState("");
+  const [downloadableVideo, setDownloadableVideo] =
+    useState<DownloadableVideo | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [transcript, setTranscript] = useState("");
@@ -61,6 +116,7 @@ export default function UploadPage() {
 
     setError("");
     setMessage("");
+    setDownloadableVideo(null);
     setRecipe(null);
     setTranscript("");
     setModel("");
@@ -136,6 +192,122 @@ export default function UploadPage() {
       setTranscript(data.transcript ?? "");
       setModel(data.model ?? "");
       setMessage("Recipe generated successfully!");
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while processing the video."
+      );
+      setMessage("");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // URL input
+  async function handleGenerateFromUrl() {
+    if (!videoUrl.trim() || loading) {
+      if (!videoUrl.trim()) setError("Please enter a video link first.");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setDownloadableVideo(null);
+    setRecipe(null);
+    setTranscript("");
+    setModel("");
+    setMessage("Checking the video link...");
+
+    try {
+      const response = await fetch("/api/media/inspect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: videoUrl.trim() }),
+      });
+
+      const data: {
+        platform?: string;
+        result?: unknown;
+        error?: { message?: string };
+      } = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data.error?.message === "string"
+            ? data.error.message
+            : "Could not inspect this video link."
+        );
+      }
+
+      if (!data.platform || data.result === undefined) {
+        throw new Error("The video service returned an unexpected response.");
+      }
+
+      const downloadableVideo = getDownloadableVideo(data.result);
+      setDownloadableVideo(downloadableVideo);
+
+      if (!downloadableVideo) {
+        throw new Error("The video service did not return a downloadable video.");
+      }
+
+      await generateRecipeFromLink(downloadableVideo);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while processing the video."
+      );
+      setMessage("");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function generateRecipeFromLink(downloadableVideo: DownloadableVideo) {
+    setMessage("Downloading and processing the video. This may take a few minutes.");
+
+    const response = await fetch("/api/recipes/extract-link", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        downloadUrl: downloadableVideo.url,
+        description: downloadableVideo.description,
+      }),
+    });
+
+    const data: ExtractionResult & { error?: { message?: string } } =
+      await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        typeof data.error?.message === "string"
+          ? data.error.message
+          : "Recipe extraction failed."
+      );
+    }
+
+    if (!data.recipe || typeof data.recipe !== "object") {
+      throw new Error("The backend did not return a recipe.");
+    }
+
+    setRecipe(data.recipe);
+    setTranscript(data.transcript ?? "");
+    setModel(data.model ?? "");
+    setMessage("Recipe generated successfully!");
+  }
+
+  async function handleRetryLinkExtraction() {
+    if (!downloadableVideo || loading) return;
+
+    setLoading(true);
+    setError("");
+    setRecipe(null);
+    setTranscript("");
+    setModel("");
+
+    try {
+      await generateRecipeFromLink(downloadableVideo);
     } catch (err) {
       setError(
         err instanceof Error
@@ -259,6 +431,46 @@ export default function UploadPage() {
         >
           {loading ? "Generating Recipe..." : "Generate Recipe"}
         </button>
+
+        <div className="my-6 border-t border-neutral-300" />
+
+        <h3 className="mb-3 text-lg font-semibold">Or use a video link</h3>
+        <label htmlFor={`${inputId}-url`} className="mb-2 block font-medium">
+          YouTube, TikTok, or Instagram link
+        </label>
+        <input
+          id={`${inputId}-url`}
+          type="url"
+          value={videoUrl}
+          disabled={loading}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${inputId}-error` : `${inputId}-url-help`}
+          onChange={(event) => setVideoUrl(event.target.value)}
+          placeholder="https://www.tiktok.com/..."
+          className="block w-full rounded-lg border border-neutral-500 p-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800 disabled:opacity-50"
+        />
+        <p id={`${inputId}-url-help`} className="mt-2 text-sm text-neutral-600">
+          Inspect public video details and available media options.
+        </p>
+        <button
+          type="button"
+          onClick={handleGenerateFromUrl}
+          disabled={!videoUrl.trim() || loading}
+          className="mt-4 min-h-11 w-full rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white transition-colors hover:bg-emerald-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading ? "Processing Video..." : "Download and Generate Recipe"}
+        </button>
+
+        {downloadableVideo && error && !recipe && (
+          <button
+            type="button"
+            onClick={handleRetryLinkExtraction}
+            disabled={loading}
+            className="mt-4 min-h-11 w-full rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white transition-colors hover:bg-emerald-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {loading ? "Generating Recipe..." : "Retry Recipe Generation"}
+          </button>
+        )}
 
         {/* Processing indicator */}
         {loading && (
@@ -397,10 +609,7 @@ export default function UploadPage() {
             </div>
 
             {/* Equipment */}
-            {(Array.isArray(recipe.dietary_tags)
-                ? recipe.dietary_tags.length > 0
-                : typeof recipe.dietary_tags === "string" &&
-                    recipe.dietary_tags.length > 0) && (
+            {recipe.equipment?.length ? (
               <div>
                 <h3 className="text-lg font-semibold">
                   Equipment
@@ -411,31 +620,7 @@ export default function UploadPage() {
                   ))}
                 </ul>
               </div>
-            )}
-
-            {/* Dietary tags */}
-            {Boolean(recipe.dietary_tags?.length) && (
-              <div>
-                <h3 className="text-lg font-semibold">
-                  Dietary Tags
-                </h3>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {(Array.isArray(recipe.dietary_tags)
-                    ? recipe.dietary_tags
-                    : typeof recipe.dietary_tags === "string"
-                        ? [recipe.dietary_tags]
-                        : []
-                    ).map((tag, index) => (
-                    <span
-                      key={index}
-                      className="rounded-full bg-emerald-100 px-3 py-1 text-sm text-emerald-900"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
+            ) : null}
 
             {/* Missing information */}
             {Boolean(recipe.missing_information) && (

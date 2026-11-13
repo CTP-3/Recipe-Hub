@@ -1,6 +1,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { currentUserId } from "@project/auth";
+import { recipeServiceUrl } from "../service-url";
 
 export const runtime = "nodejs";
 
@@ -39,14 +40,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const serviceUrl =
-      process.env.RECIPE_SERVICE_URL ??
-      "http://127.0.0.1:8000/extract";
-
     const serviceData = new FormData();
     serviceData.append("video", video);
 
-    const response = await fetch(serviceUrl, {
+    const response = await fetch(recipeServiceUrl("extract"), {
       method: "POST",
       body: serviceData,
       signal: AbortSignal.timeout(300000),
