@@ -28,20 +28,29 @@ Recipe Hub helps home cooks and food lovers turn social media recipe links into 
 
 ## Run it locally
 
-No Docker or cloud account is needed. Video extraction also requires Python,
-FFmpeg, and Ollama with the configured model available.
+The app's local services do not require a cloud account. Video extraction uses
+the Dockerized Panoscribe service and Classroom AI recipe models.
 
 ```bash
 pnpm install
 pnpm prisma:generate     # typed DB client
 python3 -m pip install -r services/recipe-extraction/requirements.txt
+docker compose up -d panoscribe-api
+export CLASSROOM_AI_URL='https://your-classroom-ai-endpoint/v1'
+export CLASSROOM_AI_KEY='your-classroom-ai-key'
 pnpm dev                 # web + worker + your own Postgres + Azurite
 pnpm db:seed             # demo data (with dev running)
 ```
 
-Install FFmpeg and Ollama separately, then make sure Ollama is running and has
-the `gemma3:1b` model (`ollama pull gemma3:1b`). `pnpm dev` starts the Python
-extraction API, which runs Whisper for transcription.
+The local Python extraction API calls Panoscribe at `http://127.0.0.1:9000`.
+The Compose `recipe-api` service instead reaches Panoscribe at
+`http://panoscribe-api:9000` over the Compose network. To run both extraction
+services in Docker, set `CLASSROOM_AI_URL` and `CLASSROOM_AI_KEY` in the root
+`.env` (see `.env.example`) and run `docker compose up --build`; do not also
+run the Python extraction API from `pnpm dev`, since both bind port 8000.
+Recipe generation tries `summarize` first and uses `generate` once if the
+structured response is invalid.
+
 Link inspection also requires an SMVD RapidAPI key in
 `apps/web/.env.local`:
 

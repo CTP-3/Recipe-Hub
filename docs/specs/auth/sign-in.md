@@ -16,9 +16,16 @@ their recipes and other private data with the right user.
 
 ## Behavior
 
-- In development, a user can test sign-in and sign-out on `/auth-test`, which
+- In development, a user can test sign-in and sign-out by opening
+  `/auth-test` directly, which
   also shows whether required OAuth settings are present without displaying
   their values. The test page is unavailable outside development.
+- The shared navigation shows an accessible person-icon button for Google
+  sign-in while signed out and sign-out while signed in. Both actions return
+  to `/home`; the development-only `/auth-test` page has no navigation link.
+- When a required OAuth or session setting is missing, the shared navigation
+  hides sign-in actions and the app remains usable; `/auth-test` shows the
+  missing settings without attempting to read a session.
 - A user can also start Google sign-in by opening
   `/api/auth/signin/google`.
 - Google verifies the visitor and asks for the permissions needed to identify
@@ -49,8 +56,11 @@ their recipes and other private data with the right user.
 
 - `pnpm test:integration` covers session-derived identity and signed-out
   access to the media inspection API.
-- In development, visit `/auth-test`, confirm the configuration indicators,
+- In development, open `/auth-test` directly, confirm the configuration indicators,
   sign in with Google, verify the displayed session, then sign out.
+- Confirm the shared navigation shows a labeled person-icon button for the
+  matching sign-in or sign-out action before and after authentication, and no
+  auth-test link.
 - Confirm `/api/health` still responds while signed out.
 
 ## Constraints & decisions

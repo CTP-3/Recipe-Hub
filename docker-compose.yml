@@ -1,0 +1,47 @@
+
+services:
+  recipe-api:
+    build:
+      context: ./services/recipe-extraction
+    env_file:
+      - ./services/recipe-extraction/.env
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      PANOSCRIBE_URL: http://panoscribe-api:9000
+      SHARED_DIR: /shared
+      CLASSROOM_AI_URL: ${CLASSROOM_AI_URL:-}
+      CLASSROOM_AI_KEY: ${CLASSROOM_AI_KEY:-}
+    volumes:
+      - ./services/recipe-extraction/shared-videos:/shared
+    depends_on:
+      panoscribe-api:
+        condition: service_healthy
+
+  panoscribe-api:
+    image: panoscribe-api:latest
+    command:
+      - serve
+      - --host
+      - 0.0.0.0
+      - --port
+      - "9000"
+    environment:
+      PANO_WHISPER_DEVICE: cpu
+      PANO_WHISPER_COMPUTE_TYPE: int8
+      PANO_OCR_DEVICE: cpu
+      PANO_WHISPER_MODEL: small
+    volumes:
+      - ./services/recipe-extraction/shared-videos:/shared:ro
+    ports:
+      - "127.0.0.1:9000:9000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/healthz', timeout=5)"
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 60s

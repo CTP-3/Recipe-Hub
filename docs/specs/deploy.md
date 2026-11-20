@@ -9,6 +9,8 @@ Shipping is a merge, not a ritual performed by someone who remembers the steps.
 
 - CI builds the web app's image (the **only** place images are built) and
   pushes to GHCR. Contributor laptops never need docker.
+- The web build generates the Prisma client before compiling; generated client
+  files are build artifacts, not checked-in source.
 - On main: deploy workflow creates a new Azure Container Apps revision at 0%
   traffic → smoke-tests `GET /api/health` (must say `db: "ok"`) → promotes to
   100%. A failing smoke test means traffic never shifts.

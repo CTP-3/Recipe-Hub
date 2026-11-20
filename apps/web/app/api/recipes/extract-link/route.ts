@@ -6,13 +6,32 @@ export const runtime = "nodejs";
 const MAX_DOWNLOAD_URL_LENGTH = 16_384;
 const MAX_DESCRIPTION_LENGTH = 10_000;
 const DOWNLOAD_HOST = "edge-api-v3.smvd.xyz";
+const EXTRACTION_TIMEOUT_MS = 15 * 60 * 1000;
 
 function errorResponse(code: string, message: string, status: number) {
   return Response.json({ error: { code, message } }, { status });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function isValidRecipeResponse(value: unknown): boolean {
+  if (!isRecord(value) || !isRecord(value.recipe)) return false;
+
+  const { recipe } = value;
+  return (
+    typeof recipe.title === "string" &&
+    recipe.title.trim().length > 0 &&
+    Array.isArray(recipe.ingredients) &&
+    Array.isArray(recipe.instructions)
+  );
+}
+
 export async function POST(request: Request) {
-  await currentUserId();
+  if (!(await currentUserId())) {
+    return errorResponse("UNAUTHENTICATED", "Authentication required.", 401);
+  }
 
   let body: unknown;
   try {
@@ -68,7 +87,7 @@ export async function POST(request: Request) {
         download_url: downloadUrl.toString(),
         description: body.description,
       }),
-      signal: AbortSignal.timeout(300_000),
+      signal: AbortSignal.timeout(EXTRACTION_TIMEOUT_MS),
       cache: "no-store",
     });
   } catch {
@@ -95,6 +114,14 @@ export async function POST(request: Request) {
         ? result.detail
         : "Recipe extraction failed.";
     return errorResponse("EXTRACTION_FAILED", detail, response.status);
+  }
+
+  if (!isValidRecipeResponse(result)) {
+    return errorResponse(
+      "INVALID_SERVICE_RESPONSE",
+      "Recipe extraction service did not return a valid recipe.",
+      502,
+    );
   }
 
   return Response.json(result);

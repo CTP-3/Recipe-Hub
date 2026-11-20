@@ -1,18 +1,36 @@
-// Root layout for the Next.js app. Wraps every page with the HTML shell and
-// global styles. No layout logic — just structure and metadata.
+
 import type { Metadata } from "next";
+import Navbar from "../components/Navbar";
+import NavbarAuthControls from "../components/NavbarAuthControls";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Starter Skeleton",
-  description: "C12 Fall 2026 — every layer exists; the weeks make them deep.",
+  title: "Recipe Hub",
+  description:
+    "Turn cooking videos into recipes, discover new meals, and save your favorites.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+const authConfigured = Boolean(
+  process.env.AUTH_GOOGLE_ID &&
+    process.env.AUTH_GOOGLE_SECRET &&
+    process.env.AUTH_SECRET
+);
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
-      <body className="mx-auto max-w-2xl px-4 py-10 font-sans text-neutral-900 antialiased">
-        {children}
+      <body className="min-h-screen bg-[#FAF9F6] font-sans text-stone-900 antialiased">
+        <Navbar
+          authControls={<NavbarAuthControls enabled={authConfigured} />}
+        />
+
+        <main className="min-h-screen">
+          {children}
+        </main>
       </body>
     </html>
   );

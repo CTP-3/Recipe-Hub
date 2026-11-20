@@ -2,8 +2,8 @@
 
 The user-facing web application. A Next.js server-rendered React app.
 
-**Boilerplate:** the home page shows a welcome message and a health-check link.
-Example branches add their own pages, API routes, and Client Components.
+The app includes recipe discovery, collection, and video-based creation pages,
+alongside its API routes and Client Components.
 
 ## Public surface
 
@@ -11,14 +11,18 @@ All public routes are defined under `app/api/`:
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/` | GET | Home page — boilerplate welcome message |
+| `/` | GET | Redirects to the recipe creation flow |
+| `/home` | GET | Recipe discovery and home page |
+| `/my-recipes` | GET | Saved, created, and recipe creation tabs |
+| `/upload` | GET | Redirects to the Create tab on My Recipes |
 | `/api/health` | GET | Health check — is the process alive? Can it reach the DB? |
 | `/api/auth/*` | GET/POST | Auth.js Google sign-in, callback, session, and sign-out handlers |
 | `/auth-test` | GET | Development-only Google sign-in test page |
 
-The sign-in flow can be started from the local-only `/auth-test` page or by
-opening `/api/auth/signin/google`. Recipe-processing API routes require a
-valid session.
+The sign-in flow can be started from the shared navigation or by opening
+`/api/auth/signin/google`. Recipe-processing API routes require a valid
+session. The development-only `/auth-test` page is available by direct URL but
+is not linked from navigation.
 
 ## Dependencies
 

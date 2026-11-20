@@ -9,8 +9,14 @@ Who the current user is, and how every server entry learns it.
 
 - Auth.js v5 + Prisma adapter, database sessions, Google OAuth (one provider).
 - Public surface: landing, /api/health, /api/auth/*. Protected API routes
-  return 401 for signed-out requests. The sign-in flow is started directly
-  through Auth.js routes; the app does not provide a custom login page.
+  return 401 for signed-out requests. The shared navigation provides an
+  accessible person-icon action to start Google sign-in or sign out; Auth.js
+  hosts the provider flow, and the app does not provide a custom login page.
+- If Google OAuth or the session secret is not configured, the shared
+  navigation omits auth actions and the rest of the app remains available.
+  The development-only `/auth-test` page reports which settings are missing
+  without attempting to read a session until all are present; it is not linked
+  from the shared navigation.
 - Identity comes from the session **only**. The client never supplies a user
   id — no header, no param, no dev-only bypass: dev signs in like prod.
 - First sign-in creates the user (name/avatar from Google); username remains

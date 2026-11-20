@@ -3,6 +3,7 @@
   "tasks": {
     "dev": { "cache": false, "persistent": true },
     "build": { "dependsOn": ["^build"], "outputs": [".next/**", "dist/**"] },
+    "@project/web#build": { "dependsOn": ["^build", "@project/db#generate"] },
     "typecheck": { "dependsOn": ["^build"] },
     "test": { "dependsOn": ["^build"] },
     "clean": { "cache": false },
