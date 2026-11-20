@@ -16,7 +16,7 @@ export default function RecipeCard({ recipe }: RecipeCardProps) {
   return (
     <Link
       href={`/recipes/${recipe.id}`}
-      className="group block overflow-hidden rounded-2xl bg-white shadow-sm transition hover:shadow-lg"
+      className="group block overflow-hidden rounded-2xl bg-green-50 shadow-sm transition hover:transform hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2"
     >
       <div className="overflow-hidden">
         <img
@@ -33,7 +33,7 @@ export default function RecipeCard({ recipe }: RecipeCardProps) {
           </p>
         )}
 
-        <h3 className="text-lg font-bold text-stone-900">
+        <h3 className="text-lg font-bold text-green-900">
           {recipe.title}
         </h3>
 

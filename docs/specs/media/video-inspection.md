@@ -9,8 +9,11 @@ provided by the configured video service.
 
 ## Where it lives
 - `apps/web/app/api/media/inspect/route.ts`
+- `apps/web/app/api/recipes/extract/route.ts`
 - `apps/web/app/api/recipes/extract-link/route.ts`
-- `apps/web/app/upload/page.tsx`
+- `apps/web/components/RecipeCreator.tsx`
+- `apps/web/app/my-recipes/page.tsx`
+- `docker-compose.yml`
 - `services/recipe-extraction/main.py`
 
 ## Behavior
@@ -28,7 +31,8 @@ provided by the configured video service.
   provider returns.
 - Invalid JSON, missing configuration, unavailable videos, provider errors,
   and rate limits return the standard `{ error: { code, message } }` shape.
-- The upload page accepts a video link and sends it to the inspection route.
+- The My Recipes page's Create tab accepts a video link and sends it to the
+  inspection route. `/upload` redirects to that tab.
   When the provider returns a downloadable video, the page automatically sends
   the first option and its description to `POST /api/recipes/extract-link`.
   The provider's raw JSON and video details are not displayed; the page shows
@@ -38,12 +42,34 @@ provided by the configured video service.
 - `RECIPE_SERVICE_URL` may identify the service base URL or either extraction
   endpoint; the upload and link routes resolve their respective endpoint paths
   consistently.
-- `pnpm dev` starts the Python extraction API on `127.0.0.1:8000`. Local video
-  processing requires the extraction service's Python dependencies, FFmpeg,
-  and a running Ollama service with the configured model available.
-- The extraction service downloads videos up to 25 MB without following
-  redirects, transcribes them, and supplies the description as additional
-  context for recipe generation.
+- The upload route forwards MP4, MOV, WebM, or M4V files up to 25 MB to the
+  extraction service. The service writes each video to the shared directory
+  with a random filename and removes it after processing.
+- The extraction service submits the shared file to Panoscribe with OCR
+  enabled, polls the returned job for up to 10 minutes, and separates the
+  completed job's `SPEECH` and `ON-SCREEN` segments. Both the transcript and
+  up to 40 timestamped OCR candidates are supplied as untrusted recipe evidence and
+  returned to the page for review. Repeated OCR strings are deduplicated after
+  case and whitespace normalization, retaining the first timestamp. The
+  documented Panoscribe job request exposes an OCR toggle, not a sampling
+  interval; the integration does not request individual frame sampling.
+- In Compose, `recipe-api` reaches Panoscribe at
+  `http://panoscribe-api:9000`; both containers mount
+  `services/recipe-extraction/shared-videos` at `/shared`. When FastAPI runs
+  locally through `pnpm dev`, its default Panoscribe URL is
+  `http://127.0.0.1:9000`.
+- Recipe generation uses the server-only `CLASSROOM_AI_URL` and
+  `CLASSROOM_AI_KEY` settings. It requests a strict JSON schema from the
+  `summarize` model first, then tries `generate` once if the response is
+  truncated, invalid JSON, or does not validate. SDK retries are disabled,
+  rate-limit responses stop the fallback, and each attempt logs its model,
+  finish reason, and validation outcome without logging prompt or credential
+  contents. The returned recipe preserves ingredient quantity estimates and
+  spoken wording while mapping steps and times to the existing page response.
+  The web extraction routes allow 15 minutes for transcription and generation.
+- Link extraction downloads media up to 25 MB from the approved provider host
+  without following redirects and supplies the provider description as
+  additional recipe evidence.
 
 ## Examples
 
@@ -53,19 +79,24 @@ provided by the configured video service.
 | Valid YouTube video URL | Calls the YouTube video details endpoint using its video ID. |
 | Valid Instagram post or reel URL | Calls the Instagram media details endpoint using its shortcode. |
 | Inspected response includes a downloadable video | Automatically downloads, transcribes, and generates a recipe from the first option, using its description as context, without displaying raw provider data. |
+| Completed Panoscribe job has speech and on-screen segments | Speech and OCR are both supplied to recipe generation; the page exposes the transcript and OCR candidates. |
 | Inspected response has no supported downloadable video | Displays an error without displaying raw provider data. |
 | Automatic link extraction fails after inspection | Displays the error and offers recipe-generation retry. |
-| Local development starts with `pnpm dev` | Starts the web app, worker, storage/database services, and the recipe extraction API. |
+| Local development starts with `pnpm dev` and Panoscribe on port 9000 | The Python extraction API uses Panoscribe through its host URL. |
 | URL on an unsupported host | Returns 400 without making an upstream request. |
 | Missing RapidAPI key | Returns a configuration error without making an upstream request. |
 
 ## Verify
 - Run `pnpm test && pnpm typecheck && pnpm build`.
+- Run `.venv/bin/python -m unittest discover -s services/recipe-extraction -p 'test_*.py'`.
 - With `SMVD_RAPIDAPI_KEY` configured in `apps/web/.env.local`, submit one
   supported URL to `/api/media/inspect` and confirm the result includes the
   provider's description and media information. Generate a recipe and confirm
-  the video is downloaded, transcribed, and the description is included as
-  extra context.
+  the video is downloaded, transcribed, and the description and OCR are used
+  as recipe evidence.
+- Upload a video under 25 MB and confirm the API stores it in the shared
+  directory, waits for Panoscribe, then returns a recipe with transcript and
+  OCR candidates. Verify the page displays the transcript and OCR details.
 - Submit a URL from an unsupported host and confirm the route returns 400.
 
 ## Constraints & decisions
@@ -74,8 +105,10 @@ provided by the configured video service.
 - Link-based extraction accepts only the provider's downloadable media host
   and does not follow redirects, limiting server-side downloads to provider
   media URLs.
-- Transcription uses the extraction service's configured local Whisper model;
-  no external transcription API is configured by this behavior.
+- Panoscribe is an HTTP job service; the extraction API does not import a local
+  transcription package or start a transcription subprocess.
+- Classroom AI is called through its OpenAI-compatible API; model selection
+  and structured output validation remain server-side.
 - Only the provider's details endpoints are used. Availability of a direct
   media link depends on the provider response and its access rules.
 

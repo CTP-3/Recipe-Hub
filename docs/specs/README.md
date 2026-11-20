@@ -41,6 +41,13 @@ store issue state. See [CONTRIBUTING](../../CONTRIBUTING.md) for the full arc.
 | [thumbnail](items/thumbnail.md) | feature | Worker thumbnail generation with sharp, queue pipeline | 0006, 0007, 0008 |
 | [live-progress](items/live-progress.md) | feature | SSE live progress for thumbnail pipeline, pg_notify fan-out | 0007, 0005 |
 
+### Recipes domain (`recipes/`)
+
+| Doc | Type | What it covers | Key ADRs |
+|---|---|---|---|
+| [discovery](recipes/discovery.md) | feature | Search and category-filter recipes from the home page | — |
+| [cookbook](recipes/cookbook.md) | feature | Saved, created, and create tabs on My Recipes | — |
+
 Feature specs live under `docs/specs/<domain>/`, grouped by the domain they
 describe. In this template repo the `items/` domain is a worked demonstration;
 an application built from this template keeps its own domains on `main`.

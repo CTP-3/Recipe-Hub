@@ -6,12 +6,13 @@ export const dynamic = "force-dynamic";
 export default async function AuthTestPage() {
   if (process.env.NODE_ENV !== "development") notFound();
 
-  const session = await auth();
   const config = [
     ["Google client ID", process.env.AUTH_GOOGLE_ID],
     ["Google client secret", process.env.AUTH_GOOGLE_SECRET],
     ["Auth session secret", process.env.AUTH_SECRET],
   ] as const;
+  const isConfigured = config.every(([, value]) => Boolean(value));
+  const session = isConfigured ? await auth() : null;
 
   return (
     <main className="space-y-8">
@@ -46,7 +47,9 @@ export default async function AuthTestPage() {
 
       <section className="space-y-4 rounded-lg border border-neutral-300 p-6">
         <h2 className="text-xl font-semibold">Session status</h2>
-        {session?.user ? (
+        {!isConfigured ? (
+          <p>Configure all required settings above to check or start a session.</p>
+        ) : session?.user ? (
           <div className="space-y-3">
             <p className="text-emerald-800">Signed in</p>
             {session.user.name && <p>Name: {session.user.name}</p>}
