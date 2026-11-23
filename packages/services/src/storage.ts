@@ -36,7 +36,9 @@ export async function uploadAttachment(
 ): Promise<string> {
   const blobName = safeBlobName(itemId, filename);
   const client = BlobServiceClient.fromConnectionString(CONNECTION_STRING);
-  const blockBlob = client.getContainerClient(CONTAINER).getBlockBlobClient(blobName);
+  const container = client.getContainerClient(CONTAINER);
+  await container.createIfNotExists();
+  const blockBlob = container.getBlockBlobClient(blobName);
   await blockBlob.uploadData(data, { blobHTTPHeaders: { blobContentType: contentType } });
   log.info({ blobName, bytes: data.byteLength }, "uploaded blob");
   return blobName;
@@ -51,9 +53,31 @@ export async function downloadAttachment(
     const res = await blockBlob.download(0);
     const data = new Uint8Array(await streamToBuffer(res.readableStreamBody!));
     return { data, contentType: res.contentType ?? "application/octet-stream" };
-  } catch {
-    return null;
+  } catch (error) {
+    if (isStorageNotFound(error)) return null;
+    log.error(
+      { blobName, error: error instanceof Error ? error.message : "unknown" },
+      "blob download failed",
+    );
+    throw error;
   }
+}
+
+function isStorageNotFound(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const statusCode = "statusCode" in error ? error.statusCode : undefined;
+  const code = "code" in error ? error.code : undefined;
+  return (
+    statusCode === 404 ||
+    code === "BlobNotFound" ||
+    code === "ContainerNotFound"
+  );
+}
+
+export async function deleteAttachment(blobName: string): Promise<void> {
+  const client = BlobServiceClient.fromConnectionString(CONNECTION_STRING);
+  const blockBlob = client.getContainerClient(CONTAINER).getBlockBlobClient(blobName);
+  await blockBlob.deleteIfExists();
 }
 
 async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {

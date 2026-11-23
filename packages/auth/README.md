@@ -26,8 +26,12 @@ All exports come from `src/index.ts`:
 ## Google OAuth setup
 
 Configure `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, and `AUTH_SECRET` in the
-environment. Register `http://localhost:3000/api/auth/callback/google` as a
-Google OAuth redirect URI for local development. Do not commit credentials.
+environment. By default, Auth.js builds the callback URI from the origin used
+to open the app, such as `http://localhost:3000/api/auth/callback/google`.
+Register that exact URI in Google Cloud Console. If the web app is opened on
+another port, register that port's callback URI too, or set
+`AUTH_URL=http://localhost:3000` to pin Auth.js to the documented local origin.
+Do not commit credentials.
 
 The web app exposes Auth.js handlers at `/api/auth/*`. Starting sign-in by
 opening `/api/auth/signin/google` redirects directly to Google; no custom

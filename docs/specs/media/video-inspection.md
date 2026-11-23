@@ -56,8 +56,17 @@ provided by the configured video service.
 - In Compose, `recipe-api` reaches Panoscribe at
   `http://panoscribe-api:9000`; both containers mount
   `services/recipe-extraction/shared-videos` at `/shared`. When FastAPI runs
-  locally through `pnpm dev`, its default Panoscribe URL is
-  `http://127.0.0.1:9000`.
+  locally through `pnpm dev`, it defaults to
+  `http://127.0.0.1:9000` and writes video files under
+  `services/recipe-extraction/shared-videos`. Compose explicitly overrides
+  these defaults with its container hostname and `/shared` mount. Both
+  settings can be overridden with `PANOSCRIBE_URL` and `SHARED_DIR`. For both
+  local and Compose runs, Panoscribe reads the shared file through its
+  container path under `/shared`; `PANOSCRIBE_SHARED_DIR` overrides that path.
+- Local `pnpm dev` binds the recipe extraction API to port 8001. Docker Compose
+  retains port 8000, so both APIs can run on the same host without competing
+  for a port. The web app and worker use the local port 8001 by default;
+  `RECIPE_SERVICE_URL` can override it.
 - Recipe generation uses the server-only `CLASSROOM_AI_URL` and
   `CLASSROOM_AI_KEY` settings. It requests a strict JSON schema from the
   `summarize` model first, then tries `generate` once if the response is
@@ -67,9 +76,12 @@ provided by the configured video service.
   contents. The returned recipe preserves ingredient quantity estimates and
   spoken wording while mapping steps and times to the existing page response.
   The web extraction routes allow 15 minutes for transcription and generation.
-- Link extraction downloads media up to 25 MB from the approved provider host
-  without following redirects and supplies the provider description as
-  additional recipe evidence.
+- Link extraction streams media up to 250 MB from the approved provider host
+  into the shared directory without following redirects and supplies the
+  provider description as additional recipe evidence. It rejects a larger
+  declared `Content-Length` before downloading and enforces the same limit
+  while streaming when the size is unknown or inaccurate. Direct uploads
+  remain limited to 25 MB.
 
 ## Examples
 
@@ -97,6 +109,10 @@ provided by the configured video service.
 - Upload a video under 25 MB and confirm the API stores it in the shared
   directory, waits for Panoscribe, then returns a recipe with transcript and
   OCR candidates. Verify the page displays the transcript and OCR details.
+- Submit a linked video below 250 MB and confirm it is streamed to the shared
+  directory and processed. For a linked video over 250 MB, confirm the job
+  fails with a message naming the 250 MB limit; direct uploads over 25 MB
+  remain rejected.
 - Submit a URL from an unsupported host and confirm the route returns 400.
 
 ## Constraints & decisions
@@ -104,7 +120,8 @@ provided by the configured video service.
   schema that may change between platforms.
 - Link-based extraction accepts only the provider's downloadable media host
   and does not follow redirects, limiting server-side downloads to provider
-  media URLs.
+  media URLs. It writes media to disk in bounded chunks and enforces a 250 MB
+  maximum; direct uploads retain their separate 25 MB limit.
 - Panoscribe is an HTTP job service; the extraction API does not import a local
   transcription package or start a transcription subprocess.
 - Classroom AI is called through its OpenAI-compatible API; model selection

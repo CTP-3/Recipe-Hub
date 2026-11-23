@@ -3,9 +3,18 @@
 "use client";
 
 import { useEffect, useId, useState } from "react";
+import { signInToSaveGeneratedRecipe } from "../app/auth-actions";
+import { demoRecipes } from "../lib/demo-recipes";
+import { PENDING_RECIPE_KEY } from "../lib/saved-recipes";
+import { isSupportedVideoUrl } from "@project/domain/video-url";
+import SaveGeneratedRecipeButton from "./SaveGeneratedRecipeButton";
+import RecipeCoverImage from "./RecipeCoverImage";
+import VideoExtractionDetails from "./VideoExtractionDetails";
+import OriginalVideoAttribution from "./OriginalVideoAttribution";
 
 type Ingredient = string | {
   name?: string;
+  item?: string;
   quantity?: string | number | null;
   unit?: string | null;
   estimated?: boolean;
@@ -18,41 +27,34 @@ type Instruction = string | {
   instruction?: string;
 };
 
-type Recipe = {
+export type Recipe = {
   title: string;
   description?: string | null;
   servings?: string | number | null;
   prep_time?: string | null;
   cook_time?: string | null;
   temperature?: string | null;
-  ingredients?: Ingredient[];
-  instructions?: Instruction[];
+  ingredients: Ingredient[];
+  instructions: Instruction[];
   tips?: string[];
   equipment?: string[];
   dietary_tags?: string[];
   missing_information?: string[] | string | null;
 };
 
-type OcrCandidate = {
+export type OcrCandidate = {
   time: number;
   text: string;
 };
 
-type ExtractionResult = {
-  model?: string;
-  transcript?: string;
-  ocr_candidates?: OcrCandidate[];
-  recipe: Recipe;
-};
-
-type DownloadableVideo = {
-  label: string;
-  url: string;
-  description: string;
-};
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
+}
+
+function hasKnownValue(value: string | number | null | undefined): boolean {
+  if (typeof value === "number") return Number.isFinite(value);
+  const normalized = value?.trim().toLowerCase();
+  return Boolean(normalized && normalized !== "unknown" && normalized !== "not specified");
 }
 
 function isIngredient(value: unknown): value is Ingredient {
@@ -60,11 +62,14 @@ function isIngredient(value: unknown): value is Ingredient {
   if (!isRecord(value)) return false;
 
   return (
-    (value.name === undefined || typeof value.name === "string") &&
+    ((typeof value.name === "string" && value.name.trim().length > 0) ||
+      (typeof value.item === "string" && value.item.trim().length > 0)) &&
     (value.quantity === undefined ||
       value.quantity === null ||
-      typeof value.quantity === "string" ||
-      typeof value.quantity === "number") &&
+      (typeof value.quantity === "string" && value.quantity.trim().length > 0) ||
+      (typeof value.quantity === "number" &&
+        Number.isFinite(value.quantity) &&
+        value.quantity >= 0)) &&
     (value.unit === undefined ||
       value.unit === null ||
       typeof value.unit === "string") &&
@@ -130,115 +135,115 @@ function isRecipe(value: unknown): value is Recipe {
   );
 }
 
-function isExtractionResult(value: unknown): value is ExtractionResult {
+const MAX_SIZE = 25 * 1024 * 1024;
+const JOB_POLL_INTERVAL_MS = 2_000;
+const JOB_MAX_WAIT_MS = 20 * 60 * 1_000;
+
+type JobRecipe = {
+  id: string;
+  title: string;
+  recipe: Recipe;
+  transcript: string;
+  ocrCandidates: OcrCandidate[];
+  model: string;
+  coverImageUrl: string | null;
+  visibility?: string;
+};
+
+type JobStatus = "queued" | "processing" | "ready" | "failed";
+type SourceAttribution = {
+  sourcePlatform: string | null;
+  sourceVideoUrl: string | null;
+  sourceCreatorUsername: string | null;
+  sourceCreatorName: string | null;
+  sourceCreatorProfileUrl: string | null;
+};
+
+function readSourceAttribution(value: Record<string, unknown>): SourceAttribution {
+  return {
+    sourcePlatform:
+      typeof value.sourcePlatform === "string" ? value.sourcePlatform : null,
+    sourceVideoUrl:
+      typeof value.sourceVideoUrl === "string" ? value.sourceVideoUrl : null,
+    sourceCreatorUsername:
+      typeof value.sourceCreatorUsername === "string"
+        ? value.sourceCreatorUsername
+        : null,
+    sourceCreatorName:
+      typeof value.sourceCreatorName === "string" ? value.sourceCreatorName : null,
+    sourceCreatorProfileUrl:
+      typeof value.sourceCreatorProfileUrl === "string"
+        ? value.sourceCreatorProfileUrl
+        : null,
+  };
+}
+
+function isJobStatus(value: unknown): value is JobStatus {
   return (
-    isRecord(value) &&
-    isRecipe(value.recipe) &&
-    (value.model === undefined || typeof value.model === "string") &&
-    (value.transcript === undefined || typeof value.transcript === "string") &&
-    (value.ocr_candidates === undefined ||
-      (Array.isArray(value.ocr_candidates) &&
-        value.ocr_candidates.every(
-          (item) =>
-            isRecord(item) &&
-            typeof item.time === "number" &&
-            typeof item.text === "string"
-        )))
+    value === "queued" ||
+    value === "processing" ||
+    value === "ready" ||
+    value === "failed"
   );
 }
 
-function getErrorMessage(value: unknown): string | null {
-  if (!isRecord(value)) return null;
-  if (typeof value.error === "string") return value.error;
-  if (isRecord(value.error) && typeof value.error.message === "string") {
+function isJobRecipe(value: unknown): value is JobRecipe {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    isRecipe(value.recipe) &&
+    typeof value.transcript === "string" &&
+    typeof value.model === "string" &&
+    (value.coverImageUrl === null || typeof value.coverImageUrl === "string") &&
+    Array.isArray(value.ocrCandidates) &&
+    value.ocrCandidates.every(
+      (candidate) =>
+        isRecord(candidate) &&
+        typeof candidate.time === "number" &&
+        typeof candidate.text === "string",
+    )
+  );
+}
+
+function jobError(value: unknown): string {
+  if (
+    isRecord(value) &&
+    isRecord(value.error) &&
+    typeof value.error.message === "string"
+  ) {
     return value.error.message;
   }
-  if (typeof value.detail === "string") return value.detail;
-  return null;
+  if (isRecord(value) && typeof value.error === "string") return value.error;
+  return "Recipe extraction failed. Please try again.";
 }
-
-async function readExtractionResponse(response: Response): Promise<ExtractionResult> {
-  let value: unknown;
-  try {
-    value = await response.json();
-  } catch {
-    throw new Error("The recipe service returned an invalid response.");
-  }
-
-  if (!response.ok) {
-    throw new Error(
-      getErrorMessage(value) ??
-        `Recipe extraction failed (HTTP ${response.status}).`
-    );
-  }
-
-  if (!isExtractionResult(value)) {
-    throw new Error(
-      "The recipe service did not return a valid structured recipe."
-    );
-  }
-
-  return value;
-}
-
-function getDownloadableVideo(result: unknown): DownloadableVideo | null {
-  if (!isRecord(result) || !Array.isArray(result.contents)) {
-    return null;
-  }
-
-  const contents: unknown[] = result.contents;
-  for (const content of contents) {
-    if (!isRecord(content) || !Array.isArray(content.videos)) {
-      continue;
-    }
-
-    const videos: unknown[] = content.videos;
-    for (const video of videos) {
-      if (!isRecord(video) || typeof video.url !== "string") {
-        continue;
-      }
-
-      try {
-        const url = new URL(video.url);
-        if (
-          url.protocol !== "https:" ||
-          url.hostname !== "edge-api-v3.smvd.xyz" ||
-          !url.pathname.startsWith("/rproxy/") ||
-          url.username ||
-          url.password
-        ) {
-          continue;
-        }
-
-        return {
-          label: typeof video.label === "string" ? video.label : "Video",
-          url: url.toString(),
-          description: url.searchParams.get("dl") ?? "",
-        };
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  return null;
-}
-
-const MAX_SIZE = 25 * 1024 * 1024;
 
 export default function RecipeCreator() {
   const inputId = useId();
 
   const [video, setVideo] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState("");
-  const [downloadableVideo, setDownloadableVideo] =
-    useState<DownloadableVideo | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [recipe, setRecipe] = useState<Recipe | null>(null);
+  const [generatedRecipeId, setGeneratedRecipeId] = useState<string | null>(null);
   const [transcript, setTranscript] = useState("");
   const [ocrCandidates, setOcrCandidates] = useState<OcrCandidate[]>([]);
   const [model, setModel] = useState("");
+  const [sourceVideo, setSourceVideo] = useState<string | null>(null);
+  const [sourceAccessToken, setSourceAccessToken] = useState<string | null>(null);
+  const [sourceAttribution, setSourceAttribution] = useState<SourceAttribution>({
+    sourcePlatform: null,
+    sourceVideoUrl: null,
+    sourceCreatorUsername: null,
+    sourceCreatorName: null,
+    sourceCreatorProfileUrl: null,
+  });
+  const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null);
+  const [sourceType, setSourceType] = useState<"LINK" | "UPLOAD" | null>(null);
+  const [visibility, setVisibility] = useState<"private" | "public">("private");
+  const [publishing, setPublishing] = useState(false);
+  const [publishMessage, setPublishMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [retryAvailable, setRetryAvailable] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -249,16 +254,109 @@ export default function RecipeCreator() {
     };
   }, [preview]);
 
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("resumeSave") !== "1") return;
+
+    const draft = sessionStorage.getItem(PENDING_RECIPE_KEY);
+    if (!draft) return;
+
+    try {
+      const value: unknown = JSON.parse(draft);
+      if (
+        !isRecord(value) ||
+        !isRecipe(value.recipe) ||
+        (value.transcript !== undefined && typeof value.transcript !== "string") ||
+        (value.ocrCandidates !== undefined &&
+          (!Array.isArray(value.ocrCandidates) ||
+            !value.ocrCandidates.every(
+              (candidate) =>
+                isRecord(candidate) &&
+                typeof candidate.time === "number" &&
+                typeof candidate.text === "string",
+            ))) ||
+        (value.model !== undefined && typeof value.model !== "string") ||
+        (value.sourceVideo !== undefined &&
+          value.sourceVideo !== null &&
+          typeof value.sourceVideo !== "string") ||
+        (value.generatedRecipeId !== undefined &&
+          value.generatedRecipeId !== null &&
+          typeof value.generatedRecipeId !== "string") ||
+        (value.accessToken !== undefined &&
+          value.accessToken !== null &&
+          typeof value.accessToken !== "string") ||
+        (value.coverImageUrl !== undefined &&
+          value.coverImageUrl !== null &&
+          typeof value.coverImageUrl !== "string") ||
+        (value.sourceType !== undefined &&
+          value.sourceType !== null &&
+          value.sourceType !== "LINK" &&
+          value.sourceType !== "UPLOAD")
+      ) {
+        throw new Error("The recipe saved before sign-in could not be restored.");
+      }
+
+      setRecipe(value.recipe);
+      setGeneratedRecipeId(
+        typeof value.generatedRecipeId === "string"
+          ? value.generatedRecipeId
+          : null,
+      );
+      setTranscript(value.transcript ?? "");
+      setOcrCandidates(value.ocrCandidates ?? []);
+      setModel(value.model ?? "");
+      setSourceVideo(value.sourceVideo ?? null);
+      setSourceAccessToken(
+        typeof value.accessToken === "string" ? value.accessToken : null,
+      );
+      setCoverImageUrl(
+        typeof value.coverImageUrl === "string" ? value.coverImageUrl : null,
+      );
+      setSourceType(value.sourceType ?? null);
+      setSourceAttribution(
+        isRecord(value.sourceAttribution)
+          ? readSourceAttribution(value.sourceAttribution)
+          : {
+              sourcePlatform: null,
+              sourceVideoUrl: null,
+              sourceCreatorUsername: null,
+              sourceCreatorName: null,
+              sourceCreatorProfileUrl: null,
+            },
+      );
+      setMessage("Your recipe is ready to save to your account.");
+      sessionStorage.removeItem(PENDING_RECIPE_KEY);
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The recipe saved before sign-in could not be restored.",
+      );
+    }
+  }, []);
+
   function handleUpload(file?: File) {
     if (loading) return;
 
     setError("");
     setMessage("");
-    setDownloadableVideo(null);
     setRecipe(null);
+    setGeneratedRecipeId(null);
     setTranscript("");
     setOcrCandidates([]);
     setModel("");
+    setSourceVideo(null);
+    setSourceAccessToken(null);
+    setCoverImageUrl(null);
+    setSourceType(null);
+    setSourceAttribution({
+      sourcePlatform: null,
+      sourceVideoUrl: null,
+      sourceCreatorUsername: null,
+      sourceCreatorName: null,
+      sourceCreatorProfileUrl: null,
+    });
+    setVisibility("private");
     setVideo(null);
     setPreview(null);
 
@@ -285,8 +383,95 @@ export default function RecipeCreator() {
     }
 
     setVideo(file);
+    setSourceVideo(file.name);
     setPreview(URL.createObjectURL(file));
     setMessage(`${file.name} is ready to process.`);
+  }
+
+  async function waitForJob(response: Response) {
+    let value: unknown;
+    try {
+      value = await response.json();
+    } catch {
+      throw new Error("Recipe service returned an invalid response.");
+    }
+    if (!response.ok) throw new Error(jobError(value));
+    if (
+      !isRecord(value) ||
+      typeof value.sourceId !== "string" ||
+      !isJobStatus(value.status) ||
+      typeof value.accessToken !== "string" ||
+      (value.recipe !== null && !isJobRecipe(value.recipe))
+    ) {
+      throw new Error("Recipe service returned an invalid job.");
+    }
+
+    const sourceId = value.sourceId;
+    const accessToken = value.accessToken;
+    setSourceAttribution(readSourceAttribution(value));
+    setGeneratedRecipeId(null);
+    setSourceAccessToken(accessToken);
+
+    let job = value;
+    const deadline = Date.now() + JOB_MAX_WAIT_MS;
+    while (job.status !== "ready") {
+      if (job.status === "failed") {
+        setRetryAvailable(true);
+        throw new Error(
+          isRecord(job) && typeof job.error === "string"
+            ? job.error
+            : "Recipe extraction failed. Please try again.",
+        );
+      }
+      if (Date.now() >= deadline) {
+        throw new Error("Recipe extraction is taking too long. You can retry it.");
+      }
+      setMessage(
+        job.status === "processing"
+          ? "Transcribing and generating your recipe..."
+          : "Your recipe is queued for processing...",
+      );
+      await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+
+      const statusResponse = await fetch(
+        `/api/recipes/jobs/${encodeURIComponent(sourceId)}`,
+        {
+          cache: "no-store",
+          headers: { "x-recipe-access-token": accessToken },
+        },
+      );
+      let next: unknown;
+      try {
+        next = await statusResponse.json();
+      } catch {
+        throw new Error("Recipe service returned an invalid job status.");
+      }
+      if (!statusResponse.ok) throw new Error(jobError(next));
+      if (
+        !isRecord(next) ||
+        !isJobStatus(next.status) ||
+        (next.recipe !== null && !isJobRecipe(next.recipe))
+      ) {
+        throw new Error("Recipe service returned an invalid job status.");
+      }
+      job = next;
+      setSourceAttribution(readSourceAttribution(next));
+    }
+
+    if (!isRecord(job) || !isJobRecipe(job.recipe)) {
+      throw new Error("Recipe extraction completed without a recipe.");
+    }
+    const generated = job.recipe;
+    setRecipe(generated.recipe);
+    setGeneratedRecipeId(generated.id);
+    setTranscript(generated.transcript);
+    setOcrCandidates(generated.ocrCandidates);
+    setModel(generated.model);
+    setCoverImageUrl(generated.coverImageUrl);
+    setVisibility(
+      generated.visibility === "public" ? "public" : "private",
+    );
+    setMessage("Recipe generated successfully!");
   }
 
   async function handleGenerate() {
@@ -296,30 +481,36 @@ export default function RecipeCreator() {
     }
 
     setLoading(true);
+    setRetryAvailable(false);
+    setSourceVideo(video?.name ?? null);
     setError("");
     setRecipe(null);
+    setGeneratedRecipeId(null);
     setTranscript("");
     setOcrCandidates([]);
     setMessage(
-      "Processing your video. Panoscribe is transcribing speech and reading on-screen text before the configured recipe model generates a recipe."
+      "Uploading your video and queueing recipe extraction..."
     );
+    setSourceType("UPLOAD");
+    setSourceAttribution({
+      sourcePlatform: null,
+      sourceVideoUrl: null,
+      sourceCreatorUsername: null,
+      sourceCreatorName: null,
+      sourceCreatorProfileUrl: null,
+    });
 
     try {
       const formData = new FormData();
       formData.append("video", video);
-
-      const response = await fetch("/api/recipes/extract", {
+      if (sourceAccessToken) {
+        formData.append("accessToken", sourceAccessToken);
+      }
+      const response = await fetch("/api/recipes/jobs", {
         method: "POST",
         body: formData,
       });
-
-      const data = await readExtractionResponse(response);
-
-      setRecipe(data.recipe);
-      setTranscript(data.transcript ?? "");
-      setOcrCandidates(data.ocr_candidates ?? []);
-      setModel(data.model ?? "");
-      setMessage("Recipe generated successfully!");
+      await waitForJob(response);
     } catch (err) {
       setError(
         err instanceof Error
@@ -332,100 +523,48 @@ export default function RecipeCreator() {
     }
   }
 
-  // URL input
   async function handleGenerateFromUrl() {
     if (!videoUrl.trim() || loading) {
       if (!videoUrl.trim()) setError("Please enter a video link first.");
       return;
     }
+    if (!isSupportedVideoUrl(videoUrl.trim())) {
+      setError("Enter a supported YouTube, TikTok, or Instagram video URL.");
+      return;
+    }
 
     setLoading(true);
+    setRetryAvailable(false);
+    setSourceVideo(videoUrl.trim());
     setError("");
-    setDownloadableVideo(null);
     setRecipe(null);
+    setGeneratedRecipeId(null);
     setTranscript("");
     setOcrCandidates([]);
     setModel("");
-    setMessage("Checking the video link...");
+    setSourceType("LINK");
+    setSourceAttribution({
+      sourcePlatform: null,
+      sourceVideoUrl: null,
+      sourceCreatorUsername: null,
+      sourceCreatorName: null,
+      sourceCreatorProfileUrl: null,
+    });
+    setVisibility("private");
+    setMessage("Checking for an existing recipe...");
 
     try {
-      const response = await fetch("/api/media/inspect", {
+      const response = await fetch("/api/recipes/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: videoUrl.trim() }),
+        body: JSON.stringify({
+          url: videoUrl.trim(),
+          ...(sourceVideo === videoUrl.trim() && sourceAccessToken
+            ? { accessToken: sourceAccessToken }
+            : {}),
+        }),
       });
-
-      const data: {
-        platform?: string;
-        result?: unknown;
-        error?: { message?: string };
-      } = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          typeof data.error?.message === "string"
-            ? data.error.message
-            : "Could not inspect this video link."
-        );
-      }
-
-      if (!data.platform || data.result === undefined) {
-        throw new Error("The video service returned an unexpected response.");
-      }
-
-      const downloadableVideo = getDownloadableVideo(data.result);
-      setDownloadableVideo(downloadableVideo);
-
-      if (!downloadableVideo) {
-        throw new Error("The video service did not return a downloadable video.");
-      }
-
-      await generateRecipeFromLink(downloadableVideo);
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Something went wrong while processing the video."
-      );
-      setMessage("");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function generateRecipeFromLink(downloadableVideo: DownloadableVideo) {
-    setMessage("Downloading and processing the video. This may take a few minutes.");
-
-    const response = await fetch("/api/recipes/extract-link", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        downloadUrl: downloadableVideo.url,
-        description: downloadableVideo.description,
-      }),
-    });
-
-    const data = await readExtractionResponse(response);
-
-    setRecipe(data.recipe);
-    setTranscript(data.transcript ?? "");
-    setOcrCandidates(data.ocr_candidates ?? []);
-    setModel(data.model ?? "");
-    setMessage("Recipe generated successfully!");
-  }
-
-  async function handleRetryLinkExtraction() {
-    if (!downloadableVideo || loading) return;
-
-    setLoading(true);
-    setError("");
-    setRecipe(null);
-    setTranscript("");
-    setOcrCandidates([]);
-    setModel("");
-
-    try {
-      await generateRecipeFromLink(downloadableVideo);
+      await waitForJob(response);
     } catch (err) {
       setError(
         err instanceof Error
@@ -441,19 +580,86 @@ export default function RecipeCreator() {
   function formatIngredient(item: Ingredient): string {
     if (typeof item === "string") return item;
 
+    if (
+      item.quantity === undefined ||
+      item.quantity === null ||
+      (typeof item.quantity === "string" && !item.quantity.trim())
+    ) {
+      return "";
+    }
+
     return [
-      item.quantity,
+      typeof item.quantity === "string" ? item.quantity.trim() : item.quantity,
       item.unit,
-      item.name,
     ]
       .filter((part) => part !== null && part !== undefined && part !== "")
       .join(" ");
+  }
+
+  function ingredientName(item: Exclude<Ingredient, string>): string {
+    return item.name ?? item.item ?? "Ingredient";
   }
 
   function formatInstruction(item: Instruction): string {
     return typeof item === "string"
       ? item
       : item.instruction ?? "";
+  }
+
+  async function togglePublication() {
+    if (!generatedRecipeId || sourceType !== "LINK" || publishing) return;
+    setPublishing(true);
+    setPublishMessage("");
+    try {
+      const response = await fetch(
+        `/api/recipes/published/${encodeURIComponent(generatedRecipeId)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ published: visibility !== "public" }),
+        },
+      );
+      if (response.status === 401) {
+        sessionStorage.setItem(
+          PENDING_RECIPE_KEY,
+          JSON.stringify({
+            recipe,
+            transcript,
+            ocrCandidates,
+            model,
+            sourceVideo,
+            generatedRecipeId,
+            accessToken: sourceAccessToken,
+            coverImageUrl,
+            sourceType,
+            sourceAttribution,
+          }),
+        );
+        await signInToSaveGeneratedRecipe();
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(
+          response.status === 404
+            ? "Save this recipe to your account before publishing it."
+            : "Unable to update Explore publication.",
+        );
+      }
+      setVisibility(visibility === "public" ? "private" : "public");
+      setPublishMessage(
+        visibility === "public"
+          ? "Recipe removed from Explore."
+          : "Recipe published to Explore.",
+      );
+    } catch (caught) {
+      setPublishMessage(
+        caught instanceof Error
+          ? caught.message
+          : "Unable to update Explore publication.",
+      );
+    } finally {
+      setPublishing(false);
+    }
   }
 
   return (
@@ -472,9 +678,8 @@ export default function RecipeCreator() {
         </h2>
 
         <p className="mt-3 text-neutral-700">
-          Upload a cooking video
-          and extract the ingredients, instructions, and
-          full recipe details.
+          Paste a cooking video link to find or generate a recipe. Video uploads
+          are available as a secondary option.
         </p>
       </header>
 
@@ -487,9 +692,45 @@ export default function RecipeCreator() {
           id="upload-heading"
           className="mb-4 text-xl font-semibold"
         >
-          Upload your video
+          Paste a video link
         </h2>
 
+        <label htmlFor={`${inputId}-url`} className="mb-2 block font-medium">
+          YouTube, TikTok, or Instagram video link
+        </label>
+        <input
+          id={`${inputId}-url`}
+          type="url"
+          value={videoUrl}
+          disabled={loading}
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? `${inputId}-error` : `${inputId}-url-help`}
+          onChange={(event) => setVideoUrl(event.target.value)}
+          placeholder="YouTube, TikTok, or Instagram URL"
+          className="block w-full rounded-lg border border-neutral-500 p-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800 disabled:opacity-50"
+        />
+        <p id={`${inputId}-url-help`} className="mt-2 text-sm text-neutral-600">
+          Watch, Shorts, youtu.be, TikTok video/share links, and Instagram Reels
+          are supported. Existing recipes are checked before extraction starts.
+        </p>
+        <button
+          type="button"
+          onClick={handleGenerateFromUrl}
+          disabled={!videoUrl.trim() || loading}
+          className="mt-4 min-h-11 w-full rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white transition-colors hover:bg-emerald-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {loading
+            ? "Processing Video..."
+            : retryAvailable
+              ? "Retry Recipe Generation"
+              : "Find or Generate Recipe"}
+        </button>
+
+        <details className="mt-6 border-t border-neutral-300 pt-5">
+          <summary className="cursor-pointer font-semibold">
+            Or upload a video file
+          </summary>
+          <div className="mt-4">
         <label
           htmlFor={inputId}
           className="mb-2 block font-medium"
@@ -552,46 +793,8 @@ export default function RecipeCreator() {
         >
           {loading ? "Generating Recipe..." : "Generate Recipe"}
         </button>
-
-        <div className="my-6 border-t border-neutral-300" />
-
-        <h3 className="mb-3 text-lg font-semibold">Or use a video link</h3>
-        <label htmlFor={`${inputId}-url`} className="mb-2 block font-medium">
-          YouTube, TikTok, or Instagram link
-        </label>
-        <input
-          id={`${inputId}-url`}
-          type="url"
-          value={videoUrl}
-          disabled={loading}
-          aria-invalid={Boolean(error)}
-          aria-describedby={error ? `${inputId}-error` : `${inputId}-url-help`}
-          onChange={(event) => setVideoUrl(event.target.value)}
-          placeholder="https://www.tiktok.com/..."
-          className="block w-full rounded-lg border border-neutral-500 p-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800 disabled:opacity-50"
-        />
-        <p id={`${inputId}-url-help`} className="mt-2 text-sm text-neutral-600">
-          Inspect public video details and available media options.
-        </p>
-        <button
-          type="button"
-          onClick={handleGenerateFromUrl}
-          disabled={!videoUrl.trim() || loading}
-          className="mt-4 min-h-11 w-full rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white transition-colors hover:bg-emerald-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {loading ? "Processing Video..." : "Download and Generate Recipe"}
-        </button>
-
-        {downloadableVideo && error && !recipe && (
-          <button
-            type="button"
-            onClick={handleRetryLinkExtraction}
-            disabled={loading}
-            className="mt-4 min-h-11 w-full rounded-lg bg-emerald-800 px-5 py-3 font-semibold text-white transition-colors hover:bg-emerald-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-neutral-900 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {loading ? "Generating Recipe..." : "Retry Recipe Generation"}
-          </button>
-        )}
+          </div>
+        </details>
 
         {/* Processing indicator */}
         {loading && (
@@ -628,26 +831,23 @@ export default function RecipeCreator() {
 
       {/* Recipe results */}
       <section
-        aria-labelledby="recipe-heading"
+        aria-label="Generated recipe"
         className="mt-8 rounded-xl border border-neutral-400 bg-white p-6 shadow-sm"
       >
-        <h2
-          id="recipe-heading"
-          className="text-xl font-semibold"
-        >
-          Your Recipe
-        </h2>
-
-        {!recipe ? (
-          <p className="mt-3 text-neutral-700">
-            Your extracted recipe will appear here after
-            processing your video.
+          {!recipe ? (
+            <p className="text-neutral-700">
+              Your extracted recipe will appear here after
+              processing your video.
           </p>
         ) : (
-          <div className="mt-6 space-y-6">
-            {/* Recipe title */}
+          <div className="mt-6 space-y-8">
+            <RecipeCoverImage
+              src={coverImageUrl}
+              alt={`Cover image for ${recipe.title}`}
+              className="aspect-video w-full rounded-2xl object-cover"
+            />
             <div>
-              <h3 className="text-2xl font-bold">
+              <h3 className="text-3xl font-bold text-green-950">
                 {recipe.title || "Untitled Recipe"}
               </h3>
 
@@ -656,65 +856,138 @@ export default function RecipeCreator() {
                   {recipe.description}
                 </p>
               )}
+              {sourceType === "LINK" && (
+                <OriginalVideoAttribution
+                  platform={sourceAttribution.sourcePlatform}
+                  videoUrl={sourceAttribution.sourceVideoUrl ?? sourceVideo}
+                  creatorUsername={sourceAttribution.sourceCreatorUsername}
+                  creatorName={sourceAttribution.sourceCreatorName}
+                  creatorProfileUrl={sourceAttribution.sourceCreatorProfileUrl}
+                />
+              )}
 
               {model && (
-                <p className="mt-2 text-xs text-neutral-600">
+                <p className="mt-2 text-xs text-neutral-500">
                   Generated using {model}
                 </p>
               )}
             </div>
 
-            {/* Recipe details */}
-            <div className="grid grid-cols-2 gap-3 rounded-lg bg-neutral-100 p-4 text-sm sm:grid-cols-3">
-              <p>
-                <strong>Servings:</strong>{" "}
-                {recipe.servings ?? "Unknown"}
-              </p>
-              <p>
-                <strong>Prep:</strong>{" "}
-                {recipe.prep_time ?? "Unknown"}
-              </p>
-              <p>
-                <strong>Cook:</strong>{" "}
-                {recipe.cook_time ?? "Unknown"}
-              </p>
+            {(hasKnownValue(recipe.servings) ||
+              hasKnownValue(recipe.prep_time) ||
+              hasKnownValue(recipe.cook_time) ||
+              hasKnownValue(recipe.temperature)) && (
+              <div className="flex flex-wrap gap-x-6 gap-y-2 border-y border-stone-200 py-4 text-sm text-stone-700">
+                {hasKnownValue(recipe.servings) && (
+                  <p><strong>Servings:</strong> {recipe.servings}</p>
+                )}
+                {hasKnownValue(recipe.prep_time) && (
+                  <p><strong>Prep time:</strong> {recipe.prep_time}</p>
+                )}
+                {hasKnownValue(recipe.cook_time) && (
+                  <p><strong>Cook time:</strong> {recipe.cook_time}</p>
+                )}
+                {hasKnownValue(recipe.temperature) && (
+                  <p><strong>Temperature:</strong> {recipe.temperature}</p>
+                )}
+              </div>
+            )}
 
-              {recipe.temperature && (
-                <p>
-                  <strong>Temperature:</strong>{" "}
-                  {recipe.temperature}
+            <SaveGeneratedRecipeButton
+              recipe={recipe}
+              transcript={transcript}
+              ocrCandidates={ocrCandidates}
+              model={model}
+              sourceVideo={sourceVideo}
+              generatedRecipeId={generatedRecipeId}
+              accessToken={sourceAccessToken}
+              coverImageUrl={coverImageUrl}
+              sourceType={sourceType}
+              sourceAttribution={sourceAttribution}
+            />
+            {generatedRecipeId && sourceType === "LINK" && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => void togglePublication()}
+                  disabled={publishing}
+                  className="min-h-11 rounded-full border border-[#294d38] px-6 py-3 font-semibold text-[#294d38] disabled:opacity-60"
+                >
+                  {publishing
+                    ? "Updating..."
+                    : visibility === "public"
+                      ? "Unpublish from Explore"
+                      : "Publish to Explore"}
+                </button>
+                <p className="mt-2 text-sm text-stone-600">
+                  Recipes stay private unless you choose to publish them.
                 </p>
-              )}
-            </div>
+                {publishMessage && (
+                  <p role="status" className="mt-2 text-sm text-stone-700">
+                    {publishMessage}
+                  </p>
+                )}
+              </div>
+            )}
 
-            {/* Ingredients */}
             <div>
-              <h3 className="text-lg font-semibold">
+              <h3 className="text-2xl font-bold text-green-950">
                 Ingredients
               </h3>
 
               {recipe.ingredients?.length ? (
-                <ul className="mt-3 list-disc space-y-2 pl-6">
-                  {recipe.ingredients.map((item, index) => (
-                    <li key={index}>
-                      <span>{formatIngredient(item)}</span>
-                      {typeof item !== "string" && item.estimated && (
-                        <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">
-                          Estimated
-                        </span>
-                      )}
-                      {typeof item !== "string" && item.said && (
-                        <p className="mt-1 text-sm text-neutral-600">
-                          Said: {item.said}
-                        </p>
-                      )}
-                      {typeof item !== "string" && item.notes && (
-                        <p className="mt-1 text-sm text-neutral-600">
-                          {item.notes}
-                        </p>
-                      )}
-                    </li>
-                  ))}
+                <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {recipe.ingredients.map((item, index) => {
+                    const amount = formatIngredient(item);
+                    const isEstimated =
+                      typeof item !== "string" &&
+                      item.estimated === true &&
+                      Boolean(amount);
+
+                    return (
+                      <li
+                        key={index}
+                        className="rounded-xl border border-stone-200 bg-stone-50 p-4"
+                      >
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            aria-label={`Mark ${typeof item === "string" ? item : ingredientName(item)} as prepared`}
+                            className="mt-1 h-5 w-5 shrink-0 accent-emerald-800"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold text-stone-900">
+                              {typeof item === "string" ? item : ingredientName(item)}
+                            </p>
+                            <p className="mt-1 text-sm text-stone-700">
+                              {isEstimated ? (
+                                <>
+                                  <span className="mr-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                                    Estimated
+                                  </span>
+                                  {amount}
+                                </>
+                              ) : (
+                                amount || "Quantity not specified"
+                              )}
+                            </p>
+                            {typeof item !== "string" &&
+                              (item.said || item.notes) && (
+                                <details className="mt-3 border-t border-stone-200 pt-2">
+                                  <summary className="cursor-pointer text-sm font-medium text-emerald-900">
+                                    Ingredient details
+                                  </summary>
+                                  <div className="mt-2 space-y-2 text-sm text-stone-600">
+                                    {item.said && <p>In the video: {item.said}</p>}
+                                    {item.notes && <p>{item.notes}</p>}
+                                  </div>
+                                </details>
+                              )}
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               ) : (
                 <p className="mt-2 text-neutral-600">
@@ -723,9 +996,8 @@ export default function RecipeCreator() {
               )}
             </div>
 
-            {/* Instructions */}
             <div>
-              <h3 className="text-lg font-semibold">
+              <h3 className="text-2xl font-bold text-green-950">
                 Instructions
               </h3>
 
@@ -744,29 +1016,26 @@ export default function RecipeCreator() {
               )}
             </div>
 
-            {/* Equipment */}
-            {recipe.equipment?.length ? (
+            {recipe.tips?.length ? (
               <div>
-                <h3 className="text-lg font-semibold">
-                  Equipment
-                </h3>
-                <ul className="mt-2 list-disc pl-6">
-                  {recipe.equipment?.map((item, index) => (
-                    <li key={index}>{item}</li>
+                <h3 className="text-2xl font-bold text-green-950">Tips</h3>
+                <ul className="mt-3 list-disc space-y-1 pl-6">
+                  {recipe.tips.map((tip, index) => (
+                    <li key={index}>{tip}</li>
                   ))}
                 </ul>
               </div>
             ) : null}
 
-            {recipe.tips?.length ? (
-            <div>
-              <h3 className="text-lg font-semibold">Tips</h3>
-              <ul className="mt-2 list-disc space-y-1 pl-6">
-                {recipe.tips.map((tip, index) => (
-                  <li key={index}>{tip}</li>
-                ))}
-              </ul>
-            </div>
+            {recipe.equipment?.length ? (
+              <div>
+                <h3 className="text-lg font-semibold">Equipment</h3>
+                <ul className="mt-2 list-disc pl-6">
+                  {recipe.equipment.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
+              </div>
             ) : null}
 
             {recipe.dietary_tags?.length ? (
@@ -810,39 +1079,12 @@ export default function RecipeCreator() {
               </div>
             )}
 
-            {/* Transcription evidence */}
-            {transcript && (
-              <details className="rounded-lg border border-neutral-300 p-4">
-                <summary className="cursor-pointer font-medium">
-                  View Panoscribe Transcript
-                </summary>
+            <VideoExtractionDetails
+              transcript={transcript}
+              ocrCandidates={ocrCandidates}
+            />
 
-                <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-neutral-700">
-                  {transcript}
-                </p>
-              </details>
-            )}
-
-            {ocrCandidates.length > 0 && (
-              <details className="rounded-lg border border-neutral-300 p-4">
-                <summary className="cursor-pointer font-medium">
-                  View on-screen text (OCR)
-                </summary>
-
-                <ul className="mt-3 space-y-2 text-sm text-neutral-700">
-                  {ocrCandidates.map((candidate, index) => (
-                    <li key={`${candidate.time}-${index}`}>
-                      <span className="mr-2 text-neutral-500">
-                        {candidate.time}s
-                      </span>
-                      {candidate.text}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            )}
-
-            <p className="text-sm text-neutral-600">
+            <p className="border-t border-stone-200 pt-4 text-sm text-neutral-600">
               AI-generated recipes may contain mistakes.
               Verify ingredients, measurements, temperatures,
               and cooking instructions before use.

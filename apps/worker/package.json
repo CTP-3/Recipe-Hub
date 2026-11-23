@@ -11,6 +11,7 @@
   "dependencies": {
     "sharp": "^0.34.0",
     "@project/db": "workspace:*",
+    "@project/domain": "workspace:*",
     "@project/services": "workspace:*",
     "@project/log": "workspace:*"
   },

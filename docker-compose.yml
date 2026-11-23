@@ -10,8 +10,6 @@ services:
     environment:
       PANOSCRIBE_URL: http://panoscribe-api:9000
       SHARED_DIR: /shared
-      CLASSROOM_AI_URL: ${CLASSROOM_AI_URL:-}
-      CLASSROOM_AI_KEY: ${CLASSROOM_AI_KEY:-}
     volumes:
       - ./services/recipe-extraction/shared-videos:/shared
     depends_on:

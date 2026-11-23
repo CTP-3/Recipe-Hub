@@ -24,6 +24,8 @@ model User {
   sessions      Session[]
   cookbooks     Cookbook[]
   recipes       Recipe[]
+  savedRecipes  SavedRecipe[]
+  generatedRecipes GeneratedRecipe[]
 }
 
 model Account {
@@ -74,6 +76,86 @@ model Recipe {
   ingredients   Ingredient[]
   components    Component[]
   equipment     Equipment[]
+}
+
+model SavedRecipe {
+  id          String   @id @default(cuid())
+  userId      String
+  fingerprint String
+  title       String
+  recipe      Json?
+  sourceVideo String?
+  generatedRecipeId String?
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  generatedRecipe GeneratedRecipe? @relation(fields: [generatedRecipeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, fingerprint])
+  @@unique([userId, generatedRecipeId])
+  @@index([userId, createdAt])
+}
+
+enum VideoSourceType {
+  LINK
+  UPLOAD
+}
+
+enum RecipeExtractionStatus {
+  QUEUED
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum RecipeVisibility {
+  PRIVATE
+  PUBLIC
+}
+
+model VideoSource {
+  id              String                  @id @default(cuid())
+  sourceType      VideoSourceType
+  platform        String?
+  originalUrl     String?                 @db.Text
+  canonicalUrl    String?                 @db.Text
+  videoId         String?
+  sourcePlatform  String?
+  sourceVideoUrl  String?                 @db.Text
+  sourceVideoId   String?
+  sourceCreatorUsername String?
+  sourceCreatorName String?
+  sourceCreatorProfileUrl String?         @db.Text
+  sourceHash      String                  @unique
+  uploadBlobKey   String?
+  status          RecipeExtractionStatus  @default(QUEUED)
+  errorMessage    String?                 @db.Text
+  requestedById   String?
+  accessTokenHash String?
+  attempts        Int                     @default(0)
+  createdAt       DateTime                @default(now())
+  lastProcessedAt DateTime?
+  generatedRecipe GeneratedRecipe?
+}
+
+model GeneratedRecipe {
+  id              String           @id @default(cuid())
+  videoSourceId   String           @unique
+  ownerId         String?
+  title           String
+  recipe          Json
+  transcript      String?          @db.Text
+  ocrCandidates   Json?
+  model           String?
+  coverImageKey   String?
+  visibility      RecipeVisibility @default(PRIVATE)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  videoSource     VideoSource      @relation(fields: [videoSourceId], references: [id], onDelete: Cascade)
+  owner           User?            @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  bookmarks       SavedRecipe[]
+
+  @@index([visibility, createdAt])
+  @@index([ownerId, createdAt])
 }
 
 model Component {

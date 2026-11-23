@@ -1,0 +1,3 @@
+ALTER TABLE "VideoSource"
+  ADD COLUMN "accessTokenHash" TEXT,
+  ADD COLUMN "attempts" INTEGER NOT NULL DEFAULT 0;

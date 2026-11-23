@@ -1,5 +1,6 @@
 import json
 import logging
+import base64
 import tempfile
 import unittest
 from pathlib import Path
@@ -51,6 +52,109 @@ def completion(content, finish_reason="stop"):
 
 
 class RecipeExtractionTests(unittest.TestCase):
+    def test_local_service_defaults_use_shared_folder_and_host_panoscribe(self):
+        self.assertEqual(
+            main.configured_shared_dir(),
+            Path(main.__file__).resolve().parent / "shared-videos",
+        )
+        self.assertEqual(
+            main.configured_panoscribe_url(),
+            "http://127.0.0.1:9000",
+        )
+        self.assertEqual(main.configured_shared_dir("/shared"), Path("/shared"))
+        self.assertEqual(
+            main.configured_panoscribe_url("http://panoscribe-api:9000/"),
+            "http://panoscribe-api:9000",
+        )
+
+    def test_extract_cover_frame_returns_persistent_image_payload(self):
+        frame = b"\xff\xd8" + b"x" * 1_500
+        with patch(
+            "main.subprocess.run",
+            side_effect=[
+                SimpleNamespace(stdout="12.0"),
+                SimpleNamespace(stdout=frame),
+            ],
+        ) as run:
+            cover = main.extract_cover_frame(Path("/shared/video.mp4"))
+
+        self.assertEqual(cover["mime_type"], "image/jpeg")
+        self.assertEqual(base64.b64decode(cover["data"]), frame)
+        self.assertEqual(run.call_count, 2)
+
+    def test_extract_cover_frame_gracefully_handles_unavailable_ffmpeg(self):
+        with patch("main.subprocess.run", side_effect=FileNotFoundError):
+            self.assertIsNone(main.extract_cover_frame(Path("/shared/video.mp4")))
+
+    def test_link_download_streams_video_within_configured_limit(self):
+        response = Mock()
+        response.status_code = 200
+        response.headers = {
+            "content-type": "video/mp4",
+            "content-length": "12",
+        }
+        response.iter_content.return_value = iter([b"recipe ", b"video"])
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "main.requests.get", return_value=response
+        ):
+            path = Path(temp_dir) / "recipe.mp4"
+            main.download_video(
+                "https://edge-api-v3.smvd.xyz/rproxy/video",
+                path,
+            )
+
+            self.assertEqual(path.read_bytes(), b"recipe video")
+
+    def test_link_download_rejects_video_over_limit_while_streaming(self):
+        response = Mock()
+        response.status_code = 200
+        response.headers = {"content-type": "video/mp4", "content-length": "4"}
+        response.iter_content.return_value = iter([b"1234", b"5678"])
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
+            main, "MAX_LINK_VIDEO_SIZE", 7
+        ), patch("main.requests.get", return_value=response):
+            with self.assertRaises(HTTPException) as raised:
+                main.download_video(
+                    "https://edge-api-v3.smvd.xyz/rproxy/video",
+                    Path(temp_dir) / "recipe.mp4",
+                )
+
+        self.assertEqual(raised.exception.status_code, 413)
+        self.assertEqual(
+            raised.exception.detail,
+            main.LINK_VIDEO_TOO_LARGE_DETAIL,
+        )
+        self.assertEqual(response.iter_content.call_count, 1)
+
+    def test_link_download_rejects_oversize_content_length_before_streaming(self):
+        response = Mock()
+        response.status_code = 200
+        response.headers = {
+            "content-type": "video/mp4",
+            "content-length": "8",
+        }
+        response.iter_content.return_value = iter([b"12345678"])
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
+            main, "MAX_LINK_VIDEO_SIZE", 7
+        ), patch("main.requests.get", return_value=response):
+            with self.assertRaises(HTTPException) as raised:
+                main.download_video(
+                    "https://edge-api-v3.smvd.xyz/rproxy/video",
+                    Path(temp_dir) / "recipe.mp4",
+                )
+
+        self.assertEqual(raised.exception.status_code, 413)
+        response.iter_content.assert_not_called()
+
     def test_panoscribe_evidence_keeps_speech_and_deduplicates_ocr(self):
         segments = [
             {"source": "SPEECH", "text": "Season the salmon."},
@@ -61,11 +165,11 @@ class RecipeExtractionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "recipe.mp4"
             path.touch()
-            with patch.object(main, "SHARED_DIR", Path(temp_dir)), patch(
-                "main.requests.post"
-            ) as submit, patch("main.requests.get") as poll, patch(
-                "main.time.sleep"
-            ):
+            with patch.object(main, "SHARED_DIR", Path(temp_dir)), patch.object(
+                main, "PANOSCRIBE_SHARED_DIR", Path("/shared")
+            ), patch("main.requests.post") as submit, patch(
+                "main.requests.get"
+            ) as poll, patch("main.time.sleep"):
                 submit.return_value.json.return_value = {"job_id": "job-id"}
                 poll.return_value.json.return_value = {
                     "status": "done",
@@ -74,6 +178,10 @@ class RecipeExtractionTests(unittest.TestCase):
 
                 evidence = main.transcribe_with_panoscribe(path)
 
+        self.assertEqual(
+            submit.call_args.kwargs["json"],
+            {"source": "/shared/recipe.mp4", "ocr": True},
+        )
         self.assertEqual(evidence["transcript"], "Season the salmon.")
         self.assertEqual(
             evidence["ocr_candidates"],
@@ -176,6 +284,35 @@ class RecipeExtractionTests(unittest.TestCase):
             ["summarize", "generate"],
         )
 
+    def test_estimated_ingredient_without_optional_note_is_valid(self):
+        recipe = valid_recipe()
+        recipe["ingredients"][1]["notes"] = None
+
+        validated, reason = main.validate_recipe(recipe)
+
+        self.assertEqual(reason, "valid")
+        self.assertEqual(validated["ingredients"][1]["quantity"], 1)
+        self.assertTrue(validated["ingredients"][1]["estimated"])
+        self.assertIsNone(validated["ingredients"][1]["notes"])
+
+    def test_estimated_ingredient_without_usable_quantity_is_rejected(self):
+        recipe = valid_recipe()
+        recipe["ingredients"][1]["quantity"] = "  "
+
+        validated, reason = main.validate_recipe(recipe)
+
+        self.assertIsNone(validated)
+        self.assertEqual(reason, "invalid_schema")
+
+    def test_blank_explicit_quantity_is_rejected(self):
+        recipe = valid_recipe()
+        recipe["ingredients"][0]["quantity"] = " "
+
+        validated, reason = main.validate_recipe(recipe)
+
+        self.assertIsNone(validated)
+        self.assertEqual(reason, "invalid_schema")
+
     def test_extraction_maps_legacy_fields_and_preserves_quantity_evidence(self):
         client = Mock()
         client.chat.completions.create.return_value = completion(
@@ -220,7 +357,10 @@ class RecipeExtractionTests(unittest.TestCase):
             result["recipe"]["ingredients"][0]["said"],
             "four salmon fillets",
         )
+        self.assertEqual(result["recipe"]["ingredients"][0]["quantity"], 4)
+        self.assertEqual(result["recipe"]["ingredients"][0]["unit"], "fillets")
         self.assertTrue(result["recipe"]["ingredients"][1]["estimated"])
+        self.assertEqual(result["recipe"]["ingredients"][1]["quantity"], 1)
         self.assertEqual(
             result["recipe"]["ingredients"][1]["notes"],
             valid_recipe()["ingredients"][1]["notes"],

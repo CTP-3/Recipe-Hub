@@ -14,6 +14,58 @@ const PORT = Number(process.env.DB_PORT ?? 5433);
 const DATA_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", ".pgdata");
 
 async function main() {
+  const existingClient = new Client({
+    host: "127.0.0.1",
+    port: PORT,
+    user: "postgres",
+    password: "postgres",
+    database: "postgres",
+    connectionTimeoutMillis: 2_000,
+  });
+  let existingServer = false;
+  try {
+    await existingClient.connect();
+    existingServer = true;
+  } catch (error) {
+    await existingClient.end().catch(() => undefined);
+    if (
+      !error ||
+      typeof error !== "object" ||
+      !("code" in error) ||
+      error.code !== "ECONNREFUSED"
+    ) {
+      throw error;
+    }
+  }
+
+  if (existingServer) {
+    const result = await existingClient.query(
+      "SELECT current_setting('data_directory') AS data_directory",
+    );
+    const activeDataDir = resolve(result.rows[0].data_directory);
+    if (activeDataDir !== DATA_DIR) {
+      await existingClient.end();
+      throw new Error(
+        `PostgreSQL is already listening on port ${PORT} but uses a different data directory; refusing to reuse or start another server.`,
+      );
+    }
+    await applyMigrations(
+      {
+        exec: async (sql) => void (await existingClient.query(sql)),
+        query: async (sql, params) => existingClient.query(sql, params),
+      },
+      (msg) => log.info(msg),
+    );
+    await existingClient.end();
+    log.info(
+      { port: PORT, dataDir: DATA_DIR },
+      "existing PostgreSQL server reused; no new server was started",
+    );
+    process.on("SIGINT", () => process.exit(0));
+    process.on("SIGTERM", () => process.exit(0));
+    return;
+  }
+
   const pg = new EmbeddedPostgres({
     databaseDir: DATA_DIR,
     user: "postgres",

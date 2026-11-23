@@ -8,8 +8,10 @@ Who the current user is, and how every server entry learns it.
 ## Google sign-in and session-derived identity
 
 - Auth.js v5 + Prisma adapter, database sessions, Google OAuth (one provider).
-- Public surface: landing, /api/health, /api/auth/*. Protected API routes
-  return 401 for signed-out requests. The shared navigation provides an
+- Public surface: landing, `/api/health`, `/api/auth/*`, and video
+  inspection/recipe extraction routes that only produce previews.
+  Saved-recipe routes require a valid session and return 401 otherwise. The
+  shared navigation provides an
   accessible person-icon action to start Google sign-in or sign out; Auth.js
   hosts the provider flow, and the app does not provide a custom login page.
 - If Google OAuth or the session secret is not configured, the shared

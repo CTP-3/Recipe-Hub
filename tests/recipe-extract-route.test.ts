@@ -9,6 +9,7 @@ vi.mock("../packages/auth/src/auth", () => ({
 }));
 
 import { POST } from "../apps/web/app/api/recipes/extract/route";
+import { POST as extractLink } from "../apps/web/app/api/recipes/extract-link/route";
 
 const originalServiceUrl = process.env.RECIPE_SERVICE_URL;
 const fetchMock = vi.fn<typeof fetch>();
@@ -24,7 +25,24 @@ const recipeResponse = {
     servings: null,
     prep_time: null,
     cook_time: null,
-    ingredients: ["1 cup flour"],
+    ingredients: [
+      {
+        name: "flour",
+        quantity: 1,
+        unit: "cup",
+        estimated: false,
+        said: "one cup flour",
+        notes: "sifted",
+      },
+      {
+        name: "paprika",
+        quantity: "1 tsp",
+        unit: null,
+        estimated: true,
+        said: "some paprika",
+        notes: "Estimated from the spoken wording.",
+      },
+    ],
     instructions: ["Mix the ingredients."],
     equipment: [],
     temperature: null,
@@ -44,6 +62,17 @@ function uploadRequest() {
   }) as Parameters<typeof POST>[0];
 }
 
+function linkRequest() {
+  return new Request("http://localhost/api/recipes/extract-link", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      downloadUrl: "https://edge-api-v3.smvd.xyz/rproxy/video",
+      description: "A cooking video",
+    }),
+  });
+}
+
 beforeEach(() => {
   sessionState.userId = "user-id";
   fetchMock.mockReset();
@@ -61,16 +90,38 @@ afterEach(() => {
 });
 
 describe("POST /api/recipes/extract", () => {
-  it("preserves authentication and returns its structured error", async () => {
+  it("allows signed-out visitors to preview generated recipes", async () => {
     sessionState.userId = null;
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(recipeResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
 
     const response = await POST(uploadRequest());
 
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({
-      error: { code: "UNAUTHENTICATED", message: "Authentication required." },
-    });
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(recipeResponse);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("allows signed-out visitors to generate a recipe from a video link", async () => {
+    sessionState.userId = null;
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(recipeResponse), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const response = await extractLink(linkRequest());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(recipeResponse);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
+      "http://127.0.0.1:8001/extract-link",
+    );
   });
 
   it("forwards the uploaded file and returns the structured recipe", async () => {
@@ -86,7 +137,7 @@ describe("POST /api/recipes/extract", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual(recipeResponse);
     const [url, options] = fetchMock.mock.calls[0] ?? [];
-    expect(String(url)).toBe("http://127.0.0.1:8000/extract");
+    expect(String(url)).toBe("http://127.0.0.1:8001/extract");
     expect(options?.method).toBe("POST");
     const forwardedVideo = (options?.body as FormData | undefined)?.get("video");
     expect(forwardedVideo).toBeInstanceOf(File);

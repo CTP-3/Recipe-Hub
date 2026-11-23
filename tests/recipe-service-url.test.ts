@@ -16,10 +16,10 @@ describe("recipeServiceUrl", () => {
     delete process.env.RECIPE_SERVICE_URL;
 
     expect(recipeServiceUrl("extract").toString()).toBe(
-      "http://127.0.0.1:8000/extract",
+      "http://127.0.0.1:8001/extract",
     );
     expect(recipeServiceUrl("extract-link").toString()).toBe(
-      "http://127.0.0.1:8000/extract-link",
+      "http://127.0.0.1:8001/extract-link",
     );
   });
 

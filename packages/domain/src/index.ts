@@ -1,4 +1,42 @@
-// Web-only domain logic: input validation schemas and database queries.
-// Boilerplate — empty barrel. Example apps fill this with their own
-// schemas and query functions, following the web-only convention.
-export {};
+export {
+  deleteSavedRecipeForUser,
+  getSavedRecipeForUser,
+  listSavedRecipesForUser,
+  saveRecipeForUser,
+  savedRecipePayloadSchema,
+  type SavedRecipePayload,
+} from "./saved-recipes";
+export {
+  bookmarkDemoRecipe,
+  completeVideoSource,
+  createOrReuseVideoSource,
+  createVideoAccessToken,
+  failVideoSource,
+  getGeneratedRecipeForUser,
+  getVideoRecipeJob,
+  getVideoSourceForWorker,
+  hashUploadedVideo,
+  hashVideoAccessToken,
+  listTikTokSourcesMissingAttribution,
+  listCreatedRecipesForUser,
+  listPublishedRecipes,
+  markVideoSourceProcessing,
+  normalizeVideoUrl,
+  publishGeneratedRecipe,
+  queueRecipeRegeneration,
+  saveGeneratedRecipeForUser,
+  setVideoUploadBlob,
+  updateVideoSourceAttribution,
+} from "./video-recipes";
+export type {
+  GeneratedRecipeExtraction,
+  NormalizedVideoSource,
+  VideoSourceAttribution,
+} from "./video-recipes";
+export {
+  isTikTokHost,
+  isSupportedVideoUrl,
+  parseVideoUrl,
+  VIDEO_PLATFORM_HOSTS,
+} from "./video-url";
+export type { ParsedVideoUrl, VideoPlatform } from "./video-url";
