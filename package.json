@@ -5,11 +5,11 @@
   "type": "module",
   "packageManager": "pnpm@11.17.0",
   "scripts": {
-    "dev": "concurrently -n turbo,azurite,extraction -c cyan,magenta,yellow \"turbo run dev --parallel --filter \\\"!@project/migrate\\\"\" \"azurite --silent --skipApiVersionCheck --location .azurite\" \"cd services/recipe-extraction && if [ -x ../../.venv/bin/python ]; then ../../.venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8001; else python3 -m uvicorn main:app --host 127.0.0.1 --port 8001; fi\"",
+    "dev": "node scripts/dev-preflight.mjs && concurrently --kill-others -n turbo,azurite,extraction -c cyan,magenta,yellow \"turbo run dev --parallel --filter \\\"!@project/migrate\\\"\" \"pnpm azurite\" \"pnpm dev:extraction\"",
     "build": "turbo run build",
     "start": "pnpm --filter @project/web start",
     "typecheck": "turbo run typecheck",
-    "test": "turbo run test",
+    "test": "turbo run test && vitest run",
     "test:integration": "vitest run",
     "test:watch": "vitest",
     "db:migrate": "pnpm --filter @project/migrate dev",
@@ -19,7 +19,8 @@
     "dev:web": "pnpm --filter @project/web dev",
     "azurite": "azurite --silent --skipApiVersionCheck --location .azurite",
     "worker": "pnpm --filter @project/worker dev",
-    "clean": "turbo run clean && rm -rf node_modules"
+    "clean": "turbo run clean && rm -rf node_modules",
+    "dev:extraction": "node scripts/dev-extraction.mjs"
   },
   "dependencies": {},
   "devDependencies": {

@@ -6,7 +6,7 @@ import { useEffect, useId, useState } from "react";
 import { signInToSaveGeneratedRecipe } from "../app/auth-actions";
 import { demoRecipes } from "../lib/demo-recipes";
 import { PENDING_RECIPE_KEY } from "../lib/saved-recipes";
-import { isSupportedVideoUrl } from "@project/domain/video-url";
+import { parseVideoUrl } from "@project/domain/video-url";
 import SaveGeneratedRecipeButton from "./SaveGeneratedRecipeButton";
 import RecipeCoverImage from "./RecipeCoverImage";
 import VideoExtractionDetails from "./VideoExtractionDetails";
@@ -137,6 +137,7 @@ function isRecipe(value: unknown): value is Recipe {
 
 const MAX_SIZE = 25 * 1024 * 1024;
 const JOB_POLL_INTERVAL_MS = 2_000;
+const JOB_MAX_POLL_FAILURES = 5;
 const JOB_MAX_WAIT_MS = 20 * 60 * 1_000;
 
 type JobRecipe = {
@@ -414,6 +415,7 @@ export default function RecipeCreator() {
 
     let job = value;
     const deadline = Date.now() + JOB_MAX_WAIT_MS;
+    let pollFailures = 0;
     while (job.status !== "ready") {
       if (job.status === "failed") {
         setRetryAvailable(true);
@@ -424,6 +426,7 @@ export default function RecipeCreator() {
         );
       }
       if (Date.now() >= deadline) {
+        setRetryAvailable(true);
         throw new Error("Recipe extraction is taking too long. You can retry it.");
       }
       setMessage(
@@ -433,13 +436,29 @@ export default function RecipeCreator() {
       );
       await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
 
-      const statusResponse = await fetch(
-        `/api/recipes/jobs/${encodeURIComponent(sourceId)}`,
-        {
-          cache: "no-store",
-          headers: { "x-recipe-access-token": accessToken },
-        },
-      );
+      // A brief network or server hiccup does not mean the job failed.
+      let statusResponse: Response;
+      try {
+        statusResponse = await fetch(
+          `/api/recipes/jobs/${encodeURIComponent(sourceId)}`,
+          {
+            cache: "no-store",
+            headers: { "x-recipe-access-token": accessToken },
+            signal: AbortSignal.timeout(15_000),
+          },
+        );
+        if (statusResponse.status >= 500) throw new Error("Status unavailable.");
+      } catch {
+        pollFailures += 1;
+        if (pollFailures >= JOB_MAX_POLL_FAILURES) {
+          setRetryAvailable(true);
+          throw new Error(
+            "Recipe Hub stopped responding. Check that it is running, then retry.",
+          );
+        }
+        continue;
+      }
+      pollFailures = 0;
       let next: unknown;
       try {
         next = await statusResponse.json();
@@ -528,8 +547,8 @@ export default function RecipeCreator() {
       if (!videoUrl.trim()) setError("Please enter a video link first.");
       return;
     }
-    if (!isSupportedVideoUrl(videoUrl.trim())) {
-      setError("Enter a supported YouTube, TikTok, or Instagram video URL.");
+    if (parseVideoUrl(videoUrl.trim())?.platform !== "tiktok") {
+      setError("Enter a TikTok video link.");
       return;
     }
 
@@ -696,7 +715,7 @@ export default function RecipeCreator() {
         </h2>
 
         <label htmlFor={`${inputId}-url`} className="mb-2 block font-medium">
-          YouTube, TikTok, or Instagram video link
+          TikTok video link
         </label>
         <input
           id={`${inputId}-url`}
@@ -706,12 +725,12 @@ export default function RecipeCreator() {
           aria-invalid={Boolean(error)}
           aria-describedby={error ? `${inputId}-error` : `${inputId}-url-help`}
           onChange={(event) => setVideoUrl(event.target.value)}
-          placeholder="YouTube, TikTok, or Instagram URL"
+          placeholder="TikTok URL"
           className="block w-full rounded-lg border border-neutral-500 p-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-800 disabled:opacity-50"
         />
         <p id={`${inputId}-url-help`} className="mt-2 text-sm text-neutral-600">
-          Watch, Shorts, youtu.be, TikTok video/share links, and Instagram Reels
-          are supported. Existing recipes are checked before extraction starts.
+          TikTok video and share links are supported. Existing recipes are
+          checked before extraction starts.
         </p>
         <button
           type="button"

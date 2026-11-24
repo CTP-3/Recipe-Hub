@@ -1,6 +1,9 @@
 
 services:
+  # Not needed locally: `pnpm dev` runs the extraction API on port 8001.
+  # Start it explicitly with `docker compose --profile docker-api up -d`.
   recipe-api:
+    profiles: ["docker-api"]
     build:
       context: ./services/recipe-extraction
     env_file:

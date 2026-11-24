@@ -1,6 +1,10 @@
 import { currentUserId } from "@project/auth";
-import { getVideoRecipeJob } from "@project/domain";
-import { LINK_VIDEO_TOO_LARGE_MESSAGE } from "@project/services";
+import { getVideoRecipeJob, INTERRUPTED_MESSAGE } from "@project/domain";
+import {
+  EXTRACTION_TIMEOUT_MESSAGE,
+  EXTRACTION_UNAVAILABLE_MESSAGE,
+  LINK_VIDEO_TOO_LARGE_MESSAGE,
+} from "@project/services";
 
 function errorResponse(code: string, message: string, status: number) {
   return Response.json({ error: { code, message } }, { status });
@@ -8,6 +12,13 @@ function errorResponse(code: string, message: string, status: number) {
 
 const SAFE_EXTRACTION_ERRORS = new Set([
   LINK_VIDEO_TOO_LARGE_MESSAGE,
+  EXTRACTION_TIMEOUT_MESSAGE,
+  EXTRACTION_UNAVAILABLE_MESSAGE,
+  INTERRUPTED_MESSAGE,
+  "No supported video download was found.",
+  "The video could not be inspected.",
+  "The downloaded video is empty.",
+  "Uploaded video is empty.",
   "Uploaded video exceeds the 25 MB limit. Choose a video no larger than 25 MB.",
   "Classroom AI rate limit reached. Please try again later.",
   "Classroom AI recipe generation failed.",
@@ -67,7 +78,8 @@ export async function GET(
       sourceCreatorName: source.sourceCreatorName,
       sourceCreatorProfileUrl: source.sourceCreatorProfileUrl,
       error:
-        source.status === "FAILED"
+        source.status === "FAILED" ||
+        (source.status === "READY" && source.errorMessage)
           ? publicExtractionError(source.errorMessage)
           : null,
       recipe: source.generatedRecipe

@@ -304,6 +304,22 @@ class RecipeExtractionTests(unittest.TestCase):
         self.assertIsNone(validated)
         self.assertEqual(reason, "invalid_schema")
 
+    def test_estimate_without_an_amount_becomes_an_unknown_quantity(self):
+        recipe = valid_recipe()
+        recipe["ingredients"][1]["quantity"] = None
+        recipe["ingredients"][1]["estimated"] = True
+
+        validated, reason = main.validate_recipe(recipe)
+
+        self.assertEqual(reason, "valid")
+        self.assertIsNone(validated["ingredients"][1]["quantity"])
+        self.assertFalse(validated["ingredients"][1]["estimated"])
+
+    def test_unit_already_in_the_quantity_is_not_repeated(self):
+        self.assertIsNone(main.unit_without_repeat("2 lbs", "lbs"))
+        self.assertEqual(main.unit_without_repeat("2", "lbs"), "lbs")
+        self.assertEqual(main.unit_without_repeat(2, "lbs"), "lbs")
+
     def test_blank_explicit_quantity_is_rejected(self):
         recipe = valid_recipe()
         recipe["ingredients"][0]["quantity"] = " "

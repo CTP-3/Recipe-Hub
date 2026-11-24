@@ -8,10 +8,18 @@ export {
 } from "./saved-recipes";
 export {
   bookmarkDemoRecipe,
+  completeFromGuestExtraction,
   completeVideoSource,
   createOrReuseVideoSource,
   createVideoAccessToken,
+  failStaleVideoSources,
   failVideoSource,
+  INTERRUPTED_MESSAGE,
+  PROCESSING_STALE_MS,
+  QUEUED_STALE_MS,
+  reclaimVideoSource,
+  releaseVideoSource,
+  touchVideoSource,
   getGeneratedRecipeForUser,
   getVideoRecipeJob,
   getVideoSourceForWorker,

@@ -46,8 +46,22 @@ function safeProfileUrl(
   value: string | null,
   platform: VideoPlatform,
 ): string | null {
-  if (!isSafeSourceUrl(value, platform) || !value) return null;
-  const url = new URL(value);
+  if (!value) return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.port ||
+    !(VIDEO_PLATFORM_HOSTS[platform] as readonly string[]).includes(url.hostname)
+  ) {
+    return null;
+  }
   const validPath =
     platform === "tiktok"
       ? /^\/@[A-Za-z0-9._-]+\/?$/.test(url.pathname)

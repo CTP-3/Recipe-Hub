@@ -26,6 +26,8 @@ their account, and optionally share it with Explore.
 - `services/recipe-extraction/` — bounded video-frame extraction.
 
 ## Behavior
+- The Create form accepts TikTok links only; the parser and API also handle
+  YouTube and Instagram.
 - One shared URL parser validates the browser submission, source
   normalization, and provider dispatch. YouTube watch, Shorts, and `youtu.be`
   links; TikTok video and short/share links; and Instagram Reel links are
@@ -39,7 +41,9 @@ their account, and optionally share it with Explore.
   If the canonical source is private to another account, the submitting
   authenticated user receives a separate source keyed by that user and the
   canonical hash; private recipe data and job state are never shared across
-  owners. Each source tracks queued, processing, ready, or failed extraction
+  owners. A completed guest extraction that no account owns is copied into the
+  requester's own source instead of being extracted again; the guest's row and
+  token are never exposed, and account-owned recipes are never copied. Each source tracks queued, processing, ready, or failed extraction
   state, and a successful source points to one generated recipe. Unique
   database constraints make concurrent submissions converge on one source
   for the same owner and identity.
@@ -102,7 +106,12 @@ their account, and optionally share it with Explore.
   section, provides search/category filtering, and paginates database results.
   Cards use the stored cover image or the compact cover-unavailable state.
 - Every queue handler is idempotent. A transient failure leaves the source
-  retryable; a completed job is acknowledged only after its database update
+  retryable. The worker leases each queue message for two minutes and renews
+  the lease and the source's status time while it works, so a job whose worker
+  died is redelivered and taken over, at most three times. With an empty queue,
+  the worker fails jobs idle past five minutes (processing) or thirty minutes
+  (queued); resubmitting such a job requeues it. A failed regeneration keeps the
+  existing recipe ready. A completed job is acknowledged only after its database update
   succeeds. Regeneration is an authenticated owner action and does not create a
   duplicate source or published recipe.
 
@@ -114,6 +123,8 @@ their account, and optionally share it with Explore.
 | Submit an equivalent URL while its job is active | Return the existing job rather than enqueue another extraction. |
 | Submit a link whose private source belongs to another account | Create or reuse a source for the current account; do not reveal the other account's job or recipe. |
 | Submit a link with an existing public recipe | Return the public recipe without starting extraction. |
+| Submit a link a guest already extracted, unowned | Copy that extraction into the requester's own private recipe. |
+| The worker dies mid-job | The redelivered message resumes the job. |
 | Two requests race for a new source | The unique source identity admits one job; both requests observe that job. |
 | Extraction fails or returns invalid recipe data | Mark the job failed; do not make a cache hit or publish it. |
 | Upload a local video | Hash its bytes independently; the resulting recipe is private and cannot be published. |

@@ -63,6 +63,10 @@ export default function RegenerateRecipeButton({ sourceId }: Props) {
         }
         const status = result.status;
         if (status === "ready") {
+          // The previous recipe is kept when regeneration fails.
+          if ("error" in result && typeof result.error === "string") {
+            throw new Error(`Recipe regeneration failed. ${result.error}`);
+          }
           setMessage("Recipe refreshed.");
           window.location.reload();
           return;

@@ -7,6 +7,8 @@ import {
   normalizeVideoUrl,
   setVideoUploadBlob,
   updateVideoSourceAttribution,
+  type NormalizedVideoSource,
+  type VideoSourceAttribution,
 } from "@project/domain";
 import {
   enqueue,
@@ -99,6 +101,21 @@ function sourceResponse(
   );
 }
 
+function redirectAttribution(
+  normalized: NormalizedVideoSource,
+): VideoSourceAttribution {
+  const username = normalized.resolvedCreatorUsername;
+  return {
+    sourcePlatform: normalized.platform,
+    sourceVideoUrl: normalized.canonicalUrl,
+    sourceVideoId: normalized.videoId,
+    sourceCreatorUsername: username,
+    sourceCreatorProfileUrl: username
+      ? `https://www.tiktok.com/@${username}`
+      : null,
+  };
+}
+
 async function submitLink(
   url: string,
   accessToken: string,
@@ -132,11 +149,17 @@ async function submitLink(
 
   if (!result.shouldQueue) {
     let source = result.source;
-    try {
-      const attribution = await fetchSourceCreatorMetadata(normalized.canonicalUrl);
-      source = (await updateVideoSourceAttribution(source.id, attribution)) ?? source;
-    } catch (error) {
-      console.warn("Unable to refresh cached recipe attribution:", error);
+    if (!source.sourceCreatorUsername) {
+      try {
+        // Instagram metadata needs a paid provider call, so a cache hit skips it.
+        const attribution =
+          normalized.platform === "instagram" || normalized.resolvedCreatorUsername
+            ? redirectAttribution(normalized)
+            : await fetchSourceCreatorMetadata(normalized.canonicalUrl);
+        source = (await updateVideoSourceAttribution(source.id, attribution)) ?? source;
+      } catch (error) {
+        console.warn("Unable to refresh cached recipe attribution:", error);
+      }
     }
     return sourceResponse(source, accessToken, source.status !== "READY", userId);
   }

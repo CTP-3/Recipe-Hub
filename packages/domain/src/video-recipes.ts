@@ -8,6 +8,14 @@ import {
 } from "./video-url";
 const MAX_URL_LENGTH = 2_048;
 
+// A running worker refreshes statusUpdatedAt every 30 s, so a PROCESSING row
+// this old has no worker behind it.
+export const PROCESSING_STALE_MS = 5 * 60 * 1_000;
+// QUEUED rows can legitimately wait behind other jobs.
+export const QUEUED_STALE_MS = 30 * 60 * 1_000;
+export const INTERRUPTED_MESSAGE =
+  "Recipe extraction was interrupted. Retry the extraction.";
+
 export type NormalizedVideoSource = {
   sourceType: "LINK";
   platform: "youtube" | "tiktok" | "instagram";
@@ -15,6 +23,9 @@ export type NormalizedVideoSource = {
   canonicalUrl: string;
   videoId: string;
   sourceHash: string;
+  // Set only when TikTok's own redirect named the account; a handle typed into
+  // a URL is not verified by TikTok and is never used as attribution.
+  resolvedCreatorUsername: string | null;
 };
 
 function hashSource(identity: string): string {
@@ -25,7 +36,7 @@ function userScopedSourceHash(sourceHash: string, userId: string): string {
   return hashSource(`private-link\n${userId}\n${sourceHash}`);
 }
 
-function privateLinkSourceHash(input: VideoSourceInput): string {
+function privateSourceHash(input: VideoSourceInput): string {
   return input.requestedById !== null
     ? userScopedSourceHash(input.sourceHash, input.requestedById)
     : hashSource(
@@ -77,6 +88,14 @@ async function findOrCreateVideoSource(
   }
 }
 
+function isStale(source: { status: string; statusUpdatedAt: Date }): boolean {
+  const age = Date.now() - source.statusUpdatedAt.getTime();
+  return (
+    (source.status === "PROCESSING" && age > PROCESSING_STALE_MS) ||
+    (source.status === "QUEUED" && age > QUEUED_STALE_MS)
+  );
+}
+
 async function reuseVideoSource(
   existing: VideoSourceWithRecipe,
   input: VideoSourceInput,
@@ -92,14 +111,19 @@ async function reuseVideoSource(
     existing.accessTokenHash === hashVideoAccessToken(input.accessToken);
 
   if (!userCanRead && !tokenCanRead) return null;
-  if (existing.status !== "FAILED") {
+  if (existing.status === "READY" || (existing.status !== "FAILED" && !isStale(existing))) {
     return { source: existing, shouldQueue: false };
   }
 
   const reset = await prisma.videoSource.updateMany({
-    where: { id: existing.id, status: "FAILED" },
+    where: {
+      id: existing.id,
+      status: existing.status,
+      statusUpdatedAt: existing.statusUpdatedAt,
+    },
     data: {
       status: "QUEUED",
+      statusUpdatedAt: new Date(),
       errorMessage: null,
       requestedById: input.requestedById,
       accessTokenHash: hashVideoAccessToken(input.accessToken),
@@ -179,6 +203,7 @@ export async function normalizeVideoUrl(input: string): Promise<NormalizedVideoS
   }
 
   let parsed = parseVideoUrl(input);
+  let resolvedCreatorUsername: string | null = null;
   if (!parsed) {
     throw new Error("Provide a public YouTube, TikTok, or Instagram video URL.");
   }
@@ -189,6 +214,8 @@ export async function normalizeVideoUrl(input: string): Promise<NormalizedVideoS
     if (!parsed || parsed.requiresResolution) {
       throw new Error("The TikTok short link did not resolve to a video.");
     }
+    resolvedCreatorUsername =
+      resolved.pathname.match(/^\/@([A-Za-z0-9._-]+)\/video\//)?.[1] ?? null;
   }
 
   const { platform, videoId, canonicalUrl } = parsed;
@@ -203,6 +230,7 @@ export async function normalizeVideoUrl(input: string): Promise<NormalizedVideoS
     canonicalUrl,
     videoId,
     sourceHash: hashSource(`link\n${platform}\n${videoId}`),
+    resolvedCreatorUsername,
   };
 }
 
@@ -401,7 +429,120 @@ export async function listTikTokSourcesMissingAttribution(
   });
 }
 
+// A finished recipe the requester may already read, whichever row holds it.
+async function findReadableRecipe(input: VideoSourceInput) {
+  if (input.sourceType !== "LINK" || !input.platform || !input.videoId) return null;
+  const own = await prisma.videoSource.findFirst({
+    where: {
+      sourceType: "LINK",
+      platform: input.platform,
+      videoId: input.videoId,
+      status: "READY",
+      generatedRecipe: { isNot: null },
+      OR:
+        input.requestedById !== null
+          ? [
+              { requestedById: input.requestedById },
+              { generatedRecipe: { is: { ownerId: input.requestedById } } },
+            ]
+          : [
+              {
+                requestedById: null,
+                accessTokenHash: hashVideoAccessToken(input.accessToken),
+              },
+            ],
+    },
+    orderBy: { createdAt: "asc" },
+    include: { generatedRecipe: true },
+  });
+  return own ?? findPublicVideoRecipe(input);
+}
+
+/**
+ * Completes a queued link source from an extraction a guest already ran on the
+ * same video. The guest's row is copied, never exposed, and recipes that belong
+ * to an account are never used. Returns null when there is nothing to copy.
+ */
+export async function completeFromGuestExtraction(sourceId: string) {
+  const target = await prisma.videoSource.findUnique({
+    where: { id: sourceId },
+    include: { generatedRecipe: true },
+  });
+  if (
+    !target ||
+    target.sourceType !== "LINK" ||
+    !target.platform ||
+    !target.videoId ||
+    target.generatedRecipe
+  ) {
+    return null;
+  }
+  const donor = await prisma.videoSource.findFirst({
+    where: {
+      id: { not: sourceId },
+      sourceType: "LINK",
+      platform: target.platform,
+      videoId: target.videoId,
+      status: "READY",
+      requestedById: null,
+      generatedRecipe: { is: { ownerId: null } },
+    },
+    orderBy: { createdAt: "asc" },
+    include: { generatedRecipe: true },
+  });
+  const recipe = donor?.generatedRecipe;
+  if (!donor || !recipe) return null;
+
+  return prisma.$transaction(async (transaction) => {
+    const now = new Date();
+    const claimed = await transaction.videoSource.updateMany({
+      where: { id: sourceId, status: { in: ["QUEUED", "PROCESSING"] } },
+      data: {
+        status: "READY",
+        statusUpdatedAt: now,
+        lastProcessedAt: now,
+        errorMessage: null,
+        sourceCreatorUsername:
+          target.sourceCreatorUsername ?? donor.sourceCreatorUsername,
+        sourceCreatorName: target.sourceCreatorName ?? donor.sourceCreatorName,
+        sourceCreatorProfileUrl:
+          target.sourceCreatorProfileUrl ?? donor.sourceCreatorProfileUrl,
+      },
+    });
+    if (claimed.count === 0) return null;
+    await transaction.generatedRecipe.create({
+      data: {
+        videoSourceId: sourceId,
+        ownerId: target.requestedById,
+        title: recipe.title,
+        recipe: recipe.recipe as Prisma.InputJsonValue,
+        transcript: recipe.transcript,
+        ocrCandidates: (recipe.ocrCandidates ?? undefined) as
+          | Prisma.InputJsonValue
+          | undefined,
+        model: recipe.model,
+        coverImageKey: recipe.coverImageKey,
+        updatedAt: now,
+      },
+    });
+    return transaction.videoSource.findUniqueOrThrow({
+      where: { id: sourceId },
+      include: { generatedRecipe: true },
+    });
+  });
+}
+
 export async function createOrReuseVideoSource(input: VideoSourceInput) {
+  const readable = await findReadableRecipe(input);
+  if (readable) return { source: readable, shouldQueue: false };
+
+  const result = await resolveVideoSource(input);
+  if (!result.shouldQueue) return result;
+  const copied = await completeFromGuestExtraction(result.source.id);
+  return copied ? { source: copied, shouldQueue: false } : result;
+}
+
+async function resolveVideoSource(input: VideoSourceInput) {
   const existing = await prisma.videoSource.findUnique({
     where: { sourceHash: input.sourceHash },
     include: { generatedRecipe: true },
@@ -412,11 +553,7 @@ export async function createOrReuseVideoSource(input: VideoSourceInput) {
 
     const publicSource = await findPublicVideoRecipe(input);
     if (publicSource) return { source: publicSource, shouldQueue: false };
-    if (input.sourceType !== "LINK") {
-      throw new Error("Video recipe not found.");
-    }
-
-    const scopedHash = privateLinkSourceHash(input);
+    const scopedHash = privateSourceHash(input);
     const scoped = await findOrCreateVideoSource(input, scopedHash);
     if (scoped.created) return { source: scoped.source, shouldQueue: true };
     const scopedReusable = await reuseVideoSource(scoped.source, input);
@@ -424,19 +561,15 @@ export async function createOrReuseVideoSource(input: VideoSourceInput) {
     throw new Error("Video recipe not found.");
   }
 
-  if (input.sourceType === "LINK") {
-    const publicSource = await findPublicVideoRecipe(input);
-    if (publicSource) return { source: publicSource, shouldQueue: false };
-    const scopedHash = privateLinkSourceHash(input);
-    const scoped = await prisma.videoSource.findUnique({
-      where: { sourceHash: scopedHash },
-      include: { generatedRecipe: true },
-    });
-    if (scoped) {
-      const reusable = await reuseVideoSource(scoped, input);
-      if (reusable) return reusable;
-      throw new Error("Video recipe not found.");
-    }
+  const scopedHash = privateSourceHash(input);
+  const scopedSource = await prisma.videoSource.findUnique({
+    where: { sourceHash: scopedHash },
+    include: { generatedRecipe: true },
+  });
+  if (scopedSource) {
+    const reusable = await reuseVideoSource(scopedSource, input);
+    if (reusable) return reusable;
+    throw new Error("Video recipe not found.");
   }
 
   const result = await findOrCreateVideoSource(input, input.sourceHash);
@@ -446,11 +579,6 @@ export async function createOrReuseVideoSource(input: VideoSourceInput) {
 
   const publicSource = await findPublicVideoRecipe(input);
   if (publicSource) return { source: publicSource, shouldQueue: false };
-  if (input.sourceType !== "LINK") {
-    throw new Error("Video recipe not found.");
-  }
-
-  const scopedHash = privateLinkSourceHash(input);
   const scoped = await findOrCreateVideoSource(input, scopedHash);
   if (scoped.created) return { source: scoped.source, shouldQueue: true };
   const scopedReusable = await reuseVideoSource(scoped.source, input);
@@ -468,8 +596,61 @@ export async function setVideoUploadBlob(sourceId: string, uploadBlobKey: string
 export async function markVideoSourceProcessing(sourceId: string) {
   return prisma.videoSource.updateMany({
     where: { id: sourceId, status: "QUEUED" },
-    data: { status: "PROCESSING", attempts: { increment: 1 } },
+    data: {
+      status: "PROCESSING",
+      statusUpdatedAt: new Date(),
+      attempts: { increment: 1 },
+    },
   });
+}
+
+/** Takes over a job whose worker stopped refreshing it. */
+export async function reclaimVideoSource(sourceId: string, idleMs: number) {
+  return prisma.videoSource.updateMany({
+    where: {
+      id: sourceId,
+      status: "PROCESSING",
+      statusUpdatedAt: { lt: new Date(Date.now() - idleMs) },
+    },
+    data: { statusUpdatedAt: new Date(), attempts: { increment: 1 } },
+  });
+}
+
+export async function touchVideoSource(sourceId: string) {
+  return prisma.videoSource.updateMany({
+    where: { id: sourceId, status: "PROCESSING" },
+    data: { statusUpdatedAt: new Date() },
+  });
+}
+
+/** Puts an in-progress job back in the queue when its worker shuts down. */
+export async function releaseVideoSource(sourceId: string) {
+  return prisma.videoSource.updateMany({
+    where: { id: sourceId, status: "PROCESSING" },
+    data: { status: "QUEUED", statusUpdatedAt: new Date() },
+  });
+}
+
+/** Ends jobs that no worker or queue message will ever finish. */
+export async function failStaleVideoSources(): Promise<number> {
+  const now = Date.now();
+  const stale = await prisma.videoSource.findMany({
+    where: {
+      OR: [
+        {
+          status: "PROCESSING",
+          statusUpdatedAt: { lt: new Date(now - PROCESSING_STALE_MS) },
+        },
+        {
+          status: "QUEUED",
+          statusUpdatedAt: { lt: new Date(now - QUEUED_STALE_MS) },
+        },
+      ],
+    },
+    select: { id: true },
+  });
+  for (const { id } of stale) await failVideoSource(id, INTERRUPTED_MESSAGE);
+  return stale.length;
 }
 
 export type GeneratedRecipeExtraction = {
@@ -530,6 +711,7 @@ export async function completeVideoSource(
       where: { id: sourceId },
       data: {
         status: "READY",
+        statusUpdatedAt: new Date(),
         errorMessage: null,
         lastProcessedAt: new Date(),
         uploadBlobKey: null,
@@ -540,9 +722,27 @@ export async function completeVideoSource(
 }
 
 export async function failVideoSource(sourceId: string, message: string) {
+  const data = {
+    statusUpdatedAt: new Date(),
+    errorMessage: message.slice(0, 2_000),
+  };
+  // A failed regeneration keeps the recipe that already exists usable.
+  const kept = await prisma.videoSource.updateMany({
+    where: {
+      id: sourceId,
+      status: { not: "READY" },
+      generatedRecipe: { isNot: null },
+    },
+    data: { ...data, status: "READY" },
+  });
+  if (kept.count > 0) return kept;
   return prisma.videoSource.updateMany({
-    where: { id: sourceId, status: { not: "READY" } },
-    data: { status: "FAILED", errorMessage: message.slice(0, 2_000) },
+    where: {
+      id: sourceId,
+      status: { not: "READY" },
+      generatedRecipe: { is: null },
+    },
+    data: { ...data, status: "FAILED" },
   });
 }
 
@@ -563,7 +763,7 @@ export async function queueRecipeRegeneration(userId: string, sourceId: string) 
       status: "READY",
       generatedRecipe: { is: { ownerId: userId } },
     },
-    data: { status: "QUEUED", errorMessage: null },
+    data: { status: "QUEUED", statusUpdatedAt: new Date(), errorMessage: null },
   });
   return updated.count === 1
     ? prisma.videoSource.findUnique({ where: { id: sourceId } })

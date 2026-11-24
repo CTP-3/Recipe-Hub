@@ -63,6 +63,11 @@ provided by the configured video service.
   settings can be overridden with `PANOSCRIBE_URL` and `SHARED_DIR`. For both
   local and Compose runs, Panoscribe reads the shared file through its
   container path under `/shared`; `PANOSCRIBE_SHARED_DIR` overrides that path.
+- `pnpm dev` loads `services/recipe-extraction/.env` into the local extraction
+  API and starts Panoscribe. Compose's `recipe-api` runs only with the
+  `docker-api` profile.
+- Link extraction skips renditions without audio, prefers one within 250 MB, and
+  uses the provider's full caption as the description.
 - Local `pnpm dev` binds the recipe extraction API to port 8001. Docker Compose
   retains port 8000, so both APIs can run on the same host without competing
   for a port. The web app and worker use the local port 8001 by default;
@@ -70,7 +75,9 @@ provided by the configured video service.
 - Recipe generation uses the server-only `CLASSROOM_AI_URL` and
   `CLASSROOM_AI_KEY` settings. It requests a strict JSON schema from the
   `summarize` model first, then tries `generate` once if the response is
-  truncated, invalid JSON, or does not validate. SDK retries are disabled,
+  truncated, invalid JSON, or does not validate. Requests allow 4,096 output
+  tokens, an estimate without an amount becomes an unknown quantity, and a unit
+  already stated in the quantity is dropped. SDK retries are disabled,
   rate-limit responses stop the fallback, and each attempt logs its model,
   finish reason, and validation outcome without logging prompt or credential
   contents. The returned recipe preserves ingredient quantity estimates and

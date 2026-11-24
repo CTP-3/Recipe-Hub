@@ -6,6 +6,9 @@ import {
 } from "@project/domain";
 
 const RAPIDAPI_HOST = "social-media-video-downloader.p.rapidapi.com";
+// Same limits as the extraction service.
+const MAX_LINK_VIDEO_BYTES = 250 * 1024 * 1024;
+const MAX_CAPTION_LENGTH = 10_000;
 const RAPIDAPI_BASE_URL = `https://${RAPIDAPI_HOST}`;
 
 export function getDownloadableVideo(result: unknown): {
@@ -15,14 +18,14 @@ export function getDownloadableVideo(result: unknown): {
   if (!result || typeof result !== "object" || !("contents" in result) || !Array.isArray(result.contents)) {
     return null;
   }
+  const candidates: Array<{ url: string; description: string; bytes: number }> = [];
   for (const content of result.contents) {
-    if (!content || typeof content !== "object" || !("videos" in content) || !Array.isArray(content.videos)) {
-      continue;
-    }
+    if (!isRecord(content) || !Array.isArray(content.videos)) continue;
     for (const video of content.videos) {
-      if (!video || typeof video !== "object" || !("url" in video) || typeof video.url !== "string") {
-        continue;
-      }
+      if (!isRecord(video) || typeof video.url !== "string") continue;
+      const metadata = isRecord(video.metadata) ? video.metadata : {};
+      // Speech is the main evidence, so a silent rendition is not usable.
+      if (metadata.has_audio === false) continue;
       try {
         const url = new URL(video.url);
         if (
@@ -32,14 +35,38 @@ export function getDownloadableVideo(result: unknown): {
           !url.username &&
           !url.password
         ) {
-          return { url: url.toString(), description: url.searchParams.get("dl") ?? "" };
+          candidates.push({
+            url: url.toString(),
+            description:
+              videoCaption(result) ?? url.searchParams.get("dl") ?? "",
+            bytes:
+              typeof metadata.content_length === "number"
+                ? metadata.content_length
+                : 0,
+          });
         }
       } catch {
         continue;
       }
     }
   }
-  return null;
+  const chosen =
+    candidates.find((candidate) => candidate.bytes <= MAX_LINK_VIDEO_BYTES) ??
+    candidates[0];
+  return chosen ? { url: chosen.url, description: chosen.description } : null;
+}
+
+// Creators often write the full recipe in the caption.
+function videoCaption(result: object): string | null {
+  if (!("metadata" in result) || !isRecord(result.metadata)) return null;
+  const extra = result.metadata.additionalData;
+  const captions = [
+    ...(isRecord(extra) ? [extra.desc, extra.description] : []),
+    result.metadata.description,
+    result.metadata.title,
+  ].filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
+  const caption = captions.sort((a, b) => b.length - a.length)[0];
+  return caption ? caption.trim().slice(0, MAX_CAPTION_LENGTH) : null;
 }
 
 function errorResponse(code: string, message: string, status: number) {
@@ -182,6 +209,17 @@ function creatorFromProvider(
   let name: string | null = null;
   let profileUrl: string | null = null;
   let visited = 0;
+
+  // The provider's explicit author beats any name found elsewhere in the
+  // response, such as the audio track's.
+  for (const value of Array.isArray(input) ? input : [input]) {
+    const metadata = isRecord(value) ? value.metadata : null;
+    const author = isRecord(metadata) ? metadata.author : null;
+    const user = isRecord(author) ? author.user : null;
+    if (!isRecord(user)) continue;
+    username ??= firstString(user, ["uniqueId", "unique_id", "username"]);
+    name ??= firstString(user, ["nickname", "full_name"]);
+  }
 
   while (pending.length && visited < 100) {
     const item = pending.shift();

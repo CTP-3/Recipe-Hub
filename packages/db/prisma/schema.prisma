@@ -134,7 +134,10 @@ model VideoSource {
   attempts        Int                     @default(0)
   createdAt       DateTime                @default(now())
   lastProcessedAt DateTime?
+  statusUpdatedAt DateTime                @default(now())
   generatedRecipe GeneratedRecipe?
+
+  @@index([platform, videoId])
 }
 
 model GeneratedRecipe {
