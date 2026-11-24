@@ -1,4 +1,3 @@
-import { currentUserId } from "@project/auth";
 import { recipeServiceUrl } from "../service-url";
 
 export const runtime = "nodejs";
@@ -29,10 +28,6 @@ function isValidRecipeResponse(value: unknown): boolean {
 }
 
 export async function POST(request: Request) {
-  if (!(await currentUserId())) {
-    return errorResponse("UNAUTHENTICATED", "Authentication required.", 401);
-  }
-
   let body: unknown;
   try {
     body = await request.json();

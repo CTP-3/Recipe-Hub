@@ -1,4 +1,6 @@
 export const SAVED_KEY = 'recipe-hub:saved';
+export const PENDING_RECIPE_KEY = 'recipe-hub:pending-recipe';
+export const PENDING_BOOKMARK_KEY = 'recipe-hub:pending-bookmark';
 export function readSaved(): string[] {
   if (typeof window === 'undefined') return [];
   try { const value = JSON.parse(localStorage.getItem(SAVED_KEY) ?? '[]'); return Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string') : []; }

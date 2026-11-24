@@ -15,3 +15,5 @@ dist/
 
 recipe_result.json
 recipe_raw_output.txt
+recipe-result.json
+services/recipe-extraction/shared-videos/

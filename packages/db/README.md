@@ -8,6 +8,11 @@ The schema defines users, authentication accounts and sessions, cookbooks,
 recipes, and their related records. SQL migrations are applied by the local
 database server and the PGlite test setup.
 
+Prisma CLI commands load `prisma.config.ts`, which uses `DATABASE_URL` when
+provided and otherwise uses the same local development URL as the application.
+This project uses its own flat-SQL `_migrations` runner; use `pnpm db:migrate`
+or the local server's startup migration rather than `prisma migrate` commands.
+
 ## Public API
 
 All exports come from `src/index.ts` (`@project/db`):
@@ -32,7 +37,7 @@ environment:
 | Door | When | How |
 |---|---|---|
 | PGlite (in-process) | Tests (`PGLITE_DATA_DIR` set) | Postgres-in-WebAssembly, in memory, no server needed |
-| Local Postgres | Local dev (no env vars) | Your own server on `127.0.0.1:5433`, started by `apps/db-server/` |
+| Local Postgres | Local dev (no env vars) | Your own server on `127.0.0.1:5433`, started by `apps/db-server/`; a matching existing server/data directory is reused |
 | Azure Postgres | Production (`DATABASE_URL` set) | Azure Database for PostgreSQL over the wire |
 
 ## Dependencies

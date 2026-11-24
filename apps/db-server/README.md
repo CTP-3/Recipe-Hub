@@ -10,6 +10,9 @@ instance (Week 10).
 - Owns the `.pgdata/` data directory at the repo root
 - Auto-applies any pending migrations on startup via `@project/db`'s `applyMigrations`
 - Listens on port 5433 by default (configurable via `DB_PORT`)
+- Reuses a responding server only when it reports the repository's `.pgdata`
+  directory; refuses a different database on the same port instead of
+  starting a competing server
 - Traps SIGINT/SIGTERM to shut down cleanly
 
 ## Dependencies

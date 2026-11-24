@@ -1,6 +1,9 @@
 
 services:
+  # Not needed locally: `pnpm dev` runs the extraction API on port 8001.
+  # Start it explicitly with `docker compose --profile docker-api up -d`.
   recipe-api:
+    profiles: ["docker-api"]
     build:
       context: ./services/recipe-extraction
     env_file:
@@ -10,8 +13,6 @@ services:
     environment:
       PANOSCRIBE_URL: http://panoscribe-api:9000
       SHARED_DIR: /shared
-      CLASSROOM_AI_URL: ${CLASSROOM_AI_URL:-}
-      CLASSROOM_AI_KEY: ${CLASSROOM_AI_KEY:-}
     volumes:
       - ./services/recipe-extraction/shared-videos:/shared
     depends_on:

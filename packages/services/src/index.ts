@@ -6,8 +6,17 @@ export { queueClient, enqueue, type JobMessage, encodeJobMessage, decodeJobMessa
 export {
   uploadAttachment,
   downloadAttachment,
+  deleteAttachment,
   storageAvailable,
   safeBlobName,
   MAX_ATTACHMENT_BYTES,
 } from "./storage";
 export { stagePayload, onStage } from "./notify";
+export {
+  EXTRACTION_TIMEOUT_MESSAGE,
+  EXTRACTION_UNAVAILABLE_MESSAGE,
+  LINK_VIDEO_TOO_LARGE_MESSAGE,
+  extractRecipeFromLink,
+  extractRecipeFromUpload,
+  recipeServiceUrl,
+} from "./recipe-extraction";

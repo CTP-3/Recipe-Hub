@@ -28,6 +28,9 @@ pnpm db:seed         # seed demo data (safe to re-run — upserts)
 ```
 
 Requires the database server running (start it with `pnpm dev` or `pnpm db:dev`).
+The migration command uses the local database URL by default; set
+`DATABASE_URL` in the shell to target another database. Do not use Prisma
+Migrate commands for this repository's flat-SQL `_migrations` history.
 
 ## The seed data
 

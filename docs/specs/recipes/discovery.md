@@ -13,10 +13,15 @@ leaving the home page.
 - `apps/web/app/recipes/[id]/page.tsx` — recipe detail return link.
 
 ## Behavior
-- The home page shows the available recipes with a search field and category
-  filters for all recipes, breakfast, lunch, dinner, and dessert.
-- Search matches recipe titles, descriptions, and ingredients without regard
-  to letter case; the selected category and search term both apply.
+- The home page shows published video recipes and a separate demo recipe
+  catalog with a search field and category filters for All, Video recipe,
+  breakfast, lunch, dinner, and dessert.
+- Search is case-insensitive. Demo recipes match title, description, and
+  ingredients; published video recipes match title, description, and source
+  platform. The selected category and search term both apply.
+- Published video recipes are loaded from the server in pages and appear only
+  after their owner explicitly publishes them. Private recipes and uploads
+  never appear in Explore.
 - A search with no matches displays a message instead of recipe cards.
 - The hero's Explore recipes link and recipe browsing links point to the
   discovery section on the home page.
@@ -28,22 +33,23 @@ leaving the home page.
 
 | State / input | Behavior |
 |---|---|
-| Home page with an empty search and All selected | All available recipe cards appear. |
-| Search for `tomato` with All selected | Recipes whose title, description, or ingredients include tomato appear. |
-| Dinner selected while searching for `tomato` | Only matching dinner recipes appear. |
+| Home page with an empty search and All selected | Published video recipes and demo cards appear in separate sections. |
+| Search for `tomato` with All selected | Matching published titles/descriptions and demo titles/descriptions/ingredients appear. |
+| Video recipe selected while searching | Only matching published video recipes appear. |
+| Dinner selected while searching for `tomato` | Only matching dinner demo recipes appear. |
 | Search for a term with no matches | A no-recipes-found message appears. |
 
 ## Verify
 - Run `pnpm test`, `pnpm typecheck`, and `pnpm build`.
-- On `/home`, search by recipe name and ingredient, select a category, and verify
-  the results and empty state; use the Explore recipes link and check the URL
-  fragment.
+- On `/home`, verify the published video and demo sections, search each by
+  recipe name and ingredient where supported, select categories, and verify
+  results and the empty state; use Explore recipes and check the URL fragment.
 - Confirm `/discover` is no longer a page and the navigation has no Discover
   tab.
 
 ## Constraints & decisions
-- Discovery uses the existing demo recipe list and does not add a remote search
-  or a database query.
+- Demo discovery uses the existing local recipe list. Published video recipes
+  use the owner-scoped publication API and cursor pagination.
 - Recipe filtering stays on the home page; the existing recipe detail pages
   remain separate.
 

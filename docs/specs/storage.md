@@ -23,6 +23,11 @@ to `UseDevelopmentStorage=true`, which connects to Azurite at `127.0.0.1:10000`
 - Container: `attachments`.
 - `uploadAttachment(entityId, filename, contentType, data)` → blob name.
 - `downloadAttachment(blobName)` → `{ data, contentType }` or null.
+- Video uploads and generated recipe cover frames use this same adapter.
+  Uploads are stored under the source ID; the worker removes the source video
+  after successful extraction and stores the cover frame as `cover.jpg`.
+- Generated recipes persist the cover blob key, not image bytes. The web
+  media route checks recipe visibility/ownership before returning the image.
 - `safeBlobName(entityId, filename)` sanitizes the user filename and namespaces
   it under the entity ID: `<entityId>/<sanitized-name>`.
 - `storageAvailable()` probes container metadata; returns `false` if Azurite is down.
@@ -50,7 +55,9 @@ to `UseDevelopmentStorage=true`, which connects to Azurite at `127.0.0.1:10000`
   existing one — the DB entry is updated but the old blob lingers.
 - The queue does NOT guarantee delivery order (Azure Storage Queue is
   at-least-once, not FIFO).
-- This package does NOT generate thumbnails — that's the worker's job.
+- This package does not extract video frames. The recipe-extraction service
+  selects a bounded representative frame; the worker persists it through the
+  blob adapter.
 - The notify service does NOT authenticate or filter by user — every SSE
   stream receives all notifications on the channel; the callback set filters
   by entityId.

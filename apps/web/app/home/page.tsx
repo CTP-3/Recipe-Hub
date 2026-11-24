@@ -1,16 +1,107 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import RecipeCard from '../../components/RecipeCard';
 import { demoRecipes } from '../../lib/demo-recipes';
 
-const categories = ['All', 'Breakfast', 'Lunch', 'Dinner', 'Dessert'];
+const categories = ['All', 'Video recipe', 'Breakfast', 'Lunch', 'Dinner', 'Dessert'];
+
+type PublishedRecipeSummary = {
+  id: string;
+  title: string;
+  description: string;
+  image: string | null;
+  category: string;
+  sourcePlatform: string | null;
+  sourceVideoUrl: string | null;
+  sourceCreatorUsername: string | null;
+  sourceCreatorName: string | null;
+  sourceCreatorProfileUrl: string | null;
+};
 
 export default function HomePage() {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('All');
-  const recipes = useMemo(
+  const [publishedRecipes, setPublishedRecipes] = useState<PublishedRecipeSummary[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingPublished, setLoadingPublished] = useState(true);
+  const [publishedError, setPublishedError] = useState('');
+
+  async function loadPublishedRecipes(cursor?: string) {
+    setLoadingPublished(true);
+    setPublishedError('');
+    try {
+      const query = new URLSearchParams({ limit: '12' });
+      if (cursor) query.set('cursor', cursor);
+      const response = await fetch(`/api/recipes/published?${query}`, {
+        cache: 'no-store',
+      });
+      const result: unknown = await response.json();
+      if (!response.ok) throw new Error('Unable to load published recipes.');
+      if (
+        !result ||
+        typeof result !== 'object' ||
+        !('recipes' in result) ||
+        !Array.isArray(result.recipes) ||
+        !('nextCursor' in result) ||
+        (result.nextCursor !== null && typeof result.nextCursor !== 'string')
+      ) {
+        throw new Error('Explore returned an invalid recipe list.');
+      }
+      const recipes = result.recipes.filter(
+        (recipe): recipe is PublishedRecipeSummary =>
+          Boolean(recipe) &&
+          typeof recipe === 'object' &&
+          'id' in recipe &&
+          typeof recipe.id === 'string' &&
+          'title' in recipe &&
+          typeof recipe.title === 'string' &&
+          'description' in recipe &&
+          typeof recipe.description === 'string' &&
+          'image' in recipe &&
+          (typeof recipe.image === 'string' || recipe.image === null) &&
+          'category' in recipe &&
+          typeof recipe.category === 'string' &&
+          'sourcePlatform' in recipe &&
+          (typeof recipe.sourcePlatform === 'string' ||
+            recipe.sourcePlatform === null) &&
+          'sourceVideoUrl' in recipe &&
+          (typeof recipe.sourceVideoUrl === 'string' ||
+            recipe.sourceVideoUrl === null) &&
+          'sourceCreatorUsername' in recipe &&
+          (typeof recipe.sourceCreatorUsername === 'string' ||
+            recipe.sourceCreatorUsername === null) &&
+          'sourceCreatorName' in recipe &&
+          (typeof recipe.sourceCreatorName === 'string' ||
+            recipe.sourceCreatorName === null) &&
+          'sourceCreatorProfileUrl' in recipe &&
+          (typeof recipe.sourceCreatorProfileUrl === 'string' ||
+            recipe.sourceCreatorProfileUrl === null),
+      );
+      if (recipes.length !== result.recipes.length) {
+        throw new Error('Explore returned an invalid recipe list.');
+      }
+      setPublishedRecipes((current) =>
+        cursor ? [...current, ...recipes] : recipes,
+      );
+      setNextCursor(result.nextCursor);
+    } catch (caught) {
+      setPublishedError(
+        caught instanceof Error
+          ? caught.message
+          : 'Unable to load published recipes.',
+      );
+    } finally {
+      setLoadingPublished(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadPublishedRecipes();
+  }, []);
+
+  const visibleRecipes = useMemo(
     () =>
       demoRecipes.filter(
         (recipe) =>
@@ -20,6 +111,17 @@ export default function HomePage() {
             .includes(search.toLowerCase()),
       ),
     [search, category],
+  );
+  const visiblePublished = useMemo(
+    () =>
+      publishedRecipes.filter(
+        (recipe) =>
+          (category === 'All' || category === 'Video recipe') &&
+          `${recipe.title} ${recipe.description} ${recipe.sourcePlatform ?? ''} ${recipe.sourceCreatorUsername ?? ''} ${recipe.sourceCreatorName ?? ''}`
+            .toLowerCase()
+            .includes(search.toLowerCase()),
+      ),
+    [publishedRecipes, search, category],
   );
 
   return (
@@ -100,17 +202,64 @@ export default function HomePage() {
           ))}
         </div>
 
-        {recipes.length > 0 ? (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
-            {recipes.map((recipe) => (
-              <RecipeCard key={recipe.id} recipe={recipe} />
-            ))}
+        {publishedError && (
+          <div className="mb-6 rounded-xl bg-amber-50 p-4 text-sm text-amber-900">
+            <p role="alert">{publishedError}</p>
+            <button
+              type="button"
+              onClick={() => void loadPublishedRecipes()}
+              className="mt-2 font-semibold underline"
+            >
+              Retry
+            </button>
           </div>
-        ) : (
-          <p className="rounded-2xl bg-white p-8 text-center text-stone-500">
-            No recipes found. Try another search.
-          </p>
         )}
+
+        {visiblePublished.length > 0 && (
+          <section aria-label="Published video recipes" className="mb-10">
+            <h3 className="mb-4 text-xl font-bold text-[#294d38]">
+              Published video recipes
+            </h3>
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+              {visiblePublished.map((recipe) => (
+                <RecipeCard
+                  key={recipe.id}
+                  recipe={{
+                    ...recipe,
+                    image: recipe.image,
+                  }}
+                />
+              ))}
+            </div>
+            {nextCursor && (
+              <button
+                type="button"
+                disabled={loadingPublished}
+                onClick={() => void loadPublishedRecipes(nextCursor)}
+                className="mt-6 rounded-full border border-[#294d38] px-5 py-3 font-semibold text-[#294d38] disabled:opacity-50"
+              >
+                {loadingPublished ? 'Loading...' : 'Load more video recipes'}
+              </button>
+            )}
+          </section>
+        )}
+
+        <section aria-label="Demo recipes">
+          <h3 className="mb-4 text-xl font-bold text-[#294d38]">
+            Recipe Hub demos
+          </h3>
+          {visibleRecipes.length > 0 ? (
+            <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
+              {visibleRecipes.map((recipe) => (
+              <RecipeCard key={recipe.id} recipe={recipe} />
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-2xl bg-white p-8 text-center text-stone-500">
+              No demo recipes match your search.
+            </p>
+          )}
+        </section>
       </section>
 
       <section className="rounded-3xl border border-stone-200 bg-white p-7">
